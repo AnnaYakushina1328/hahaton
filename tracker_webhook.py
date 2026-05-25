@@ -1,3 +1,4 @@
+from frontend_state import register_frontend, record_tracker_event
 from flask import Flask, request
 from yandex_tracker_client import TrackerClient
 from predict import predict_one
@@ -5,6 +6,7 @@ import os
 from dotenv import load_dotenv
 
 app = Flask(__name__)
+register_frontend(app)
 
 load_dotenv()
 
@@ -31,7 +33,17 @@ def webhook():
 
     # защита от повторной обработки
     if issue.description and "Risk prediction:" in issue.description:
-        return {"status": "already processed"}, 200
+        event = record_tracker_event(
+            issue_key=issue_key,
+            issue=issue,
+            data=data,
+            already_processed=True,
+    )
+
+    return {
+        "status": "already processed",
+        "event": event,
+    }, 200
 
     task_dict = {
         "title": issue.summary or "",
@@ -58,11 +70,20 @@ Level: {level}
         description=(issue.description or "") + prediction_text
     )
 
+    event = record_tracker_event(
+        issue_key=issue_key,
+        issue=issue,
+        data=data,
+        score=score,
+        level=level,
+    )
+
     return {
         "status": "success",
         "issue": issue_key,
         "risk_score": float(score),
-        "risk_level": level
+        "risk_level": level,
+        "event": event,
     }, 200
 
 if __name__ == "__main__":
