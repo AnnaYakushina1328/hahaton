@@ -134,11 +134,12 @@
 
     .filters {
       display: grid;
-      grid-template-columns: 1fr;
-      gap: 8px;
-      margin-bottom: 16px;
+      grid-template-columns: 240px 1fr;
+      gap: 10px;
+      margin-bottom: 10px;
     }
 
+    .project-select,
     .search-input {
       width: 100%;
       border: 1px solid #dde3ef;
@@ -150,12 +151,14 @@
       outline: none;
     }
 
+    .project-select:focus,
     .search-input:focus {
       border-color: #356dff;
       box-shadow: 0 0 0 3px rgba(53, 109, 255, 0.12);
     }
 
     .search-hint {
+      grid-column: 1 / -1;
       color: #68738a;
       font-size: 13px;
     }
@@ -367,6 +370,9 @@
       </div>
 
       <div class="filters">
+        <select class="project-select" id="projectFilter">
+          <option value="">&#1042;&#1089;&#1077; &#1087;&#1088;&#1086;&#1077;&#1082;&#1090;&#1099;</option>
+        </select>
         <input
           class="search-input"
           id="searchInput"
@@ -391,6 +397,7 @@
     const toastsEl = document.getElementById("toasts");
     const connectionEl = document.getElementById("connection");
     const searchInput = document.getElementById("searchInput");
+    const projectFilter = document.getElementById("projectFilter");
 
     let events = [];
 
@@ -420,31 +427,67 @@
     }
 
     function getVisibleEvents() {
-      const query = normalizeText(searchInput ? searchInput.value : "");
+      const searchEl = document.getElementById("searchInput");
+      const projectEl = document.getElementById("projectFilter");
 
-      if (!query) {
-        return events;
-      }
-
-      const compactQuery = query.replace(/[^a-z?-?0-9]/gi, "");
+      const query = normalizeSearchValue(searchEl ? searchEl.value : "");
+      const selectedProject = projectEl ? projectEl.value : "";
 
       return events.filter(event => {
-        const issue = normalizeText(event.issue);
-        const compactIssue = issue.replace(/[^a-z?-?0-9]/gi, "");
-        const numberOnly = issue.replace(/[^0-9]/g, "");
-        const title = normalizeText(event.title);
-        const status = normalizeText(event.status);
-        const assignee = normalizeText(event.assignee);
+        const issue = normalizeSearchValue(event.issue);
+        const compactIssue = issue.replace(/[^a-z0-9]/gi, "");
+        const issueNumber = issue.replace(/[^0-9]/g, "");
+        const compactQuery = query.replace(/[^a-z0-9]/gi, "");
+        const projectCode = getProjectCode(event.issue);
 
-        return (
+        const projectMatches = !selectedProject || projectCode === selectedProject;
+
+        const searchMatches =
+          !query ||
           issue.includes(query) ||
           compactIssue.includes(compactQuery) ||
-          numberOnly.includes(query) ||
-          title.includes(query) ||
-          status.includes(query) ||
-          assignee.includes(query)
-        );
+          issueNumber.includes(query);
+
+        return projectMatches && searchMatches;
       });
+    }
+
+    function getProjectCode(issue) {
+      const value = String(issue || "").toUpperCase().trim();
+      const match = value.match(/^([A-Z0-9]+)-/);
+
+      return match ? match[1] : value;
+    }
+
+    function renderProjectFilter() {
+      const projectEl = document.getElementById("projectFilter");
+
+      if (!projectEl) {
+        return;
+      }
+
+      const selectedProject = projectEl.value;
+
+      const projects = Array.from(
+        new Set(
+          events
+            .map(event => getProjectCode(event.issue))
+            .filter(Boolean)
+        )
+      ).sort();
+
+      projectEl.innerHTML = '<option value="">&#1042;&#1089;&#1077; &#1087;&#1088;&#1086;&#1077;&#1082;&#1090;&#1099;</option>';
+
+      projects.forEach(project => {
+        const option = document.createElement("option");
+        option.value = project;
+        option.textContent = project;
+        projectEl.appendChild(option);
+      });
+
+      if (selectedProject && projects.includes(selectedProject)) {
+        projectEl.value = selectedProject;
+      }
     }
 
     function normalizeSearchValue(value) {
@@ -513,6 +556,8 @@
     }
 
     function renderHistory() {
+      renderProjectFilter();
+
       const visibleEvents = getVisibleEvents();
 
       historyEl.innerHTML = "";
@@ -520,7 +565,7 @@
       if (!events.length) {
         historyEl.innerHTML = `
           <div class="empty">
-            &#1053;&#1077;&#1090; &#1079;&#1072;&#1076;&#1072;&#1095; &#1087;&#1086; &#1090;&#1072;&#1082;&#1086;&#1084;&#1091; &#1085;&#1086;&#1084;&#1077;&#1088;&#1091;.
+            &#1055;&#1086;&#1082;&#1072; &#1089;&#1086;&#1073;&#1099;&#1090;&#1080;&#1081; &#1085;&#1077;&#1090;.
           </div>
         `;
         renderStats();
@@ -530,7 +575,7 @@
       if (!visibleEvents.length) {
         historyEl.innerHTML = `
           <div class="empty">
-            &#1053;&#1077;&#1090; &#1079;&#1072;&#1076;&#1072;&#1095; &#1087;&#1086; &#1090;&#1072;&#1082;&#1086;&#1084;&#1091; &#1085;&#1086;&#1084;&#1077;&#1088;&#1091;.
+            &#1053;&#1077;&#1090; &#1079;&#1072;&#1076;&#1072;&#1095; &#1087;&#1086; &#1090;&#1072;&#1082;&#1086;&#1084;&#1091; &#1092;&#1080;&#1083;&#1100;&#1090;&#1088;&#1091;.
           </div>
         `;
         renderStats();
@@ -624,8 +669,131 @@
       searchInput.addEventListener("input", renderHistory);
     }
 
+    if (projectFilter) {
+      projectFilter.addEventListener("change", renderHistory);
+    }
+
     loadHistory();
     connectEvents();
   </script>
+
+    <!-- FINAL_FILTER_PATCH_START -->
+    <script>
+      function dashboardNormalize(value) {
+        return String(value || "").toLowerCase().trim();
+      }
+
+      function dashboardProject(issue) {
+        const value = String(issue || "").toUpperCase().trim();
+        const match = value.match(/^([A-Z0-9]+)-/);
+        return match ? match[1] : value;
+      }
+
+      function dashboardVisibleEvents() {
+        const searchEl = document.getElementById("searchInput");
+        const projectEl = document.getElementById("projectFilter");
+
+        const query = dashboardNormalize(searchEl ? searchEl.value : "");
+        const selectedProject = projectEl ? String(projectEl.value || "").toUpperCase() : "";
+
+        return events.filter(event => {
+          const issue = dashboardNormalize(event.issue);
+          const issueNumber = issue.replace(/[^0-9]/g, "");
+          const compactIssue = issue.replace(/[^a-z0-9]/gi, "");
+          const compactQuery = query.replace(/[^a-z0-9]/gi, "");
+          const project = dashboardProject(event.issue);
+
+          const projectOk = !selectedProject || project === selectedProject;
+
+          const searchOk =
+            !query ||
+            issue.includes(query) ||
+            issueNumber.includes(query) ||
+            compactIssue.includes(compactQuery);
+
+          return projectOk && searchOk;
+        });
+      }
+
+      function dashboardRenderProjects() {
+        const projectEl = document.getElementById("projectFilter");
+
+        if (!projectEl) {
+          return;
+        }
+
+        const currentValue = String(projectEl.value || "").toUpperCase();
+
+        const projects = Array.from(
+          new Set(
+            events
+              .map(event => dashboardProject(event.issue))
+              .filter(Boolean)
+          )
+        ).sort();
+
+        projectEl.innerHTML = '<option value="">&#1042;&#1089;&#1077; &#1087;&#1088;&#1086;&#1077;&#1082;&#1090;&#1099;</option>';
+
+        projects.forEach(project => {
+          const option = document.createElement("option");
+          option.value = project;
+          option.textContent = project;
+          projectEl.appendChild(option);
+        });
+
+        if (currentValue && projects.includes(currentValue)) {
+          projectEl.value = currentValue;
+        }
+      }
+
+      function renderHistory() {
+        dashboardRenderProjects();
+
+        const visibleEvents = dashboardVisibleEvents();
+
+        historyEl.innerHTML = "";
+
+        if (!events.length) {
+          historyEl.innerHTML = `
+            <div class="empty">
+              &#1055;&#1086;&#1082;&#1072; &#1089;&#1086;&#1073;&#1099;&#1090;&#1080;&#1081; &#1085;&#1077;&#1090;.
+            </div>
+          `;
+          renderStats();
+          return;
+        }
+
+        if (!visibleEvents.length) {
+          historyEl.innerHTML = `
+            <div class="empty">
+              &#1053;&#1077;&#1090; &#1079;&#1072;&#1076;&#1072;&#1095; &#1087;&#1086; &#1090;&#1072;&#1082;&#1086;&#1084;&#1091; &#1092;&#1080;&#1083;&#1100;&#1090;&#1088;&#1091;.
+            </div>
+          `;
+          renderStats();
+          return;
+        }
+
+        visibleEvents.forEach(event => {
+          historyEl.appendChild(createEventCard(event));
+        });
+
+        renderStats();
+      }
+
+      window.addEventListener("DOMContentLoaded", () => {
+        const searchEl = document.getElementById("searchInput");
+        const projectEl = document.getElementById("projectFilter");
+
+        if (searchEl) {
+          searchEl.oninput = renderHistory;
+        }
+
+        if (projectEl) {
+          projectEl.onchange = renderHistory;
+        }
+      });
+    </script>
+    <!-- FINAL_FILTER_PATCH_END -->
+
 </body>
 </html>
