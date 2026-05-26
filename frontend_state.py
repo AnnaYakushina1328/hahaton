@@ -24,15 +24,28 @@ def _safe_display(value, default="unknown"):
 
 
 def _detect_trigger(data):
-    raw = json.dumps(data or {}, ensure_ascii=False).lower()
+    data = data or {}
 
-    if "status" in raw:
-        return "status_changed", "Изменился статус"
+    event = str(data.get("event", "")).lower()
 
-    if "create" in raw or "created" in raw or "new" in raw:
-        return "new_task", "Новая задача"
+    if event in ("new_task", "created", "issue_created", "create"):
+        return "new_task", "????? ??????"
 
-    return "task_updated", "Изменение задачи"
+    if event in ("status_changed", "issue_status_changed", "status"):
+        return "status_changed", "????????? ??????"
+
+    if event in ("task_updated", "updated", "issue_updated", "update"):
+        return "task_updated", "????????? ??????"
+
+    raw = json.dumps(data, ensure_ascii=False).lower()
+
+    if "event.create" in raw or "created" in raw:
+        return "new_task", "????? ??????"
+
+    if "status_changed" in raw:
+        return "status_changed", "????????? ??????"
+
+    return "task_updated", "????????? ??????"
 
 
 def _push_event(event):
