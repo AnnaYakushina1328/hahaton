@@ -1,15 +1,50 @@
-﻿import json
+﻿import csv
+import json
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock
 
 from flask import Response, jsonify, send_from_directory
 
 
-history = deque(maxlen=100)
+DATA_DIR = Path("data")
+HISTORY_FILE = DATA_DIR / "events_history.json"
+MAX_HISTORY_SIZE = 1000
+
+history = deque(maxlen=MAX_HISTORY_SIZE)
 subscribers = []
 subscribers_lock = Lock()
+
+
+def _load_history_from_file():
+    DATA_DIR.mkdir(exist_ok=True)
+
+    if not HISTORY_FILE.exists():
+        return
+
+    try:
+        with HISTORY_FILE.open("r", encoding="utf-8") as file:
+            events = json.load(file)
+
+        if isinstance(events, list):
+            for event in events[-MAX_HISTORY_SIZE:]:
+                history.append(event)
+
+        print(f"[history] loaded {len(history)} events from {HISTORY_FILE}")
+    except Exception as error:
+        print(f"[history] failed to load history: {error}")
+
+
+def _save_history_to_file():
+    DATA_DIR.mkdir(exist_ok=True)
+
+    try:
+        with HISTORY_FILE.open("w", encoding="utf-8") as file:
+            json.dump(list(history), file, ensure_ascii=False, indent=2)
+    except Exception as error:
+        print(f"[history] failed to save history: {error}")
 
 
 def _safe_display(value, default="unknown"):
@@ -29,27 +64,28 @@ def _detect_trigger(data):
     event = str(data.get("event", "")).lower()
 
     if event in ("new_task", "created", "issue_created", "create"):
-        return "new_task", "????? ??????"
+        return "new_task", "Новая задача"
 
     if event in ("status_changed", "issue_status_changed", "status"):
-        return "status_changed", "????????? ??????"
+        return "status_changed", "Изменился статус"
 
     if event in ("task_updated", "updated", "issue_updated", "update"):
-        return "task_updated", "????????? ??????"
+        return "task_updated", "Изменение задачи"
 
     raw = json.dumps(data, ensure_ascii=False).lower()
 
     if "event.create" in raw or "created" in raw:
-        return "new_task", "????? ??????"
+        return "new_task", "Новая задача"
 
     if "status_changed" in raw:
-        return "status_changed", "????????? ??????"
+        return "status_changed", "Изменился статус"
 
-    return "task_updated", "????????? ??????"
+    return "task_updated", "Изменение задачи"
 
 
 def _push_event(event):
     history.appendleft(event)
+    _save_history_to_file()
 
     with subscribers_lock:
         dead_subscribers = []
@@ -86,6 +122,8 @@ def record_tracker_event(issue_key, issue=None, data=None, score=None, level=Non
 
 
 def register_frontend(app):
+    _load_history_from_file()
+
     @app.get("/dashboard")
     def dashboard():
         return send_from_directory("frontend", "index.html")
@@ -93,6 +131,43 @@ def register_frontend(app):
     @app.get("/api/history")
     def api_history():
         return jsonify(list(history))
+
+    @app.get("/api/history/export.csv")
+    def export_history_csv():
+        DATA_DIR.mkdir(exist_ok=True)
+
+        export_file = DATA_DIR / "events_history_export.csv"
+
+        fieldnames = [
+            "time",
+            "trigger_code",
+            "issue",
+            "title",
+            "status",
+            "assignee",
+            "risk_score",
+            "risk_level",
+            "already_processed",
+        ]
+
+        with export_file.open("w", encoding="utf-8-sig", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for event in history:
+                writer.writerow({
+                    "time": event.get("time", ""),
+                    "trigger_code": event.get("trigger_code", ""),
+                    "issue": event.get("issue", ""),
+                    "title": event.get("title", ""),
+                    "status": event.get("status", ""),
+                    "assignee": event.get("assignee", ""),
+                    "risk_score": event.get("risk_score", ""),
+                    "risk_level": event.get("risk_level", ""),
+                    "already_processed": event.get("already_processed", ""),
+                })
+
+        return send_from_directory(DATA_DIR, export_file.name, as_attachment=True)
 
     @app.get("/events")
     def events():
@@ -107,7 +182,7 @@ def register_frontend(app):
 
                 while True:
                     try:
-                        event = subscriber.get(timeout=15)
+                        event = subscriber.get(timeout=30)
                         payload = json.dumps(event, ensure_ascii=False)
                         yield f"data: {payload}\n\n"
                     except Empty:

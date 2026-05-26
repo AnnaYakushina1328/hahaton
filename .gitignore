@@ -63,3 +63,6 @@ maildir
 .venv/
 
 .env
+
+data/events_history.json
+data/events_history_export.csv
