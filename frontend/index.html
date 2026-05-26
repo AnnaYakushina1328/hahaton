@@ -132,6 +132,34 @@
       filter: brightness(0.96);
     }
 
+    .filters {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .search-input {
+      width: 100%;
+      border: 1px solid #dde3ef;
+      border-radius: 14px;
+      padding: 13px 16px;
+      font-size: 16px;
+      color: #172033;
+      background: #fbfcff;
+      outline: none;
+    }
+
+    .search-input:focus {
+      border-color: #356dff;
+      box-shadow: 0 0 0 3px rgba(53, 109, 255, 0.12);
+    }
+
+    .search-hint {
+      color: #68738a;
+      font-size: 13px;
+    }
+
     .history {
       display: grid;
       gap: 12px;
@@ -338,6 +366,18 @@
         </div>
       </div>
 
+      <div class="filters">
+        <input
+          class="search-input"
+          id="searchInput"
+          type="text"
+          placeholder="&#1055;&#1086;&#1080;&#1089;&#1082; &#1087;&#1086; &#1085;&#1086;&#1084;&#1077;&#1088;&#1091; &#1079;&#1072;&#1076;&#1072;&#1095;&#1080;, &#1085;&#1072;&#1087;&#1088;&#1080;&#1084;&#1077;&#1088; CLIENT-55 &#1080;&#1083;&#1080; 55"
+        />
+        <div class="search-hint">
+          &#1052;&#1086;&#1078;&#1085;&#1086; &#1074;&#1074;&#1077;&#1089;&#1090;&#1080; &#1087;&#1086;&#1083;&#1085;&#1099;&#1081; &#1082;&#1083;&#1102;&#1095; &#1079;&#1072;&#1076;&#1072;&#1095;&#1080; &#1080;&#1083;&#1080; &#1090;&#1086;&#1083;&#1100;&#1082;&#1086; &#1085;&#1086;&#1084;&#1077;&#1088;
+        </div>
+      </div>
+
       <div class="history" id="history">
         <div class="empty">Пока событий нет. Когда webhook сработает, изменения появятся здесь.</div>
       </div>
@@ -350,6 +390,7 @@
     const historyEl = document.getElementById("history");
     const toastsEl = document.getElementById("toasts");
     const connectionEl = document.getElementById("connection");
+    const searchInput = document.getElementById("searchInput");
 
     let events = [];
 
@@ -372,6 +413,64 @@
       if (code === "status_changed") return "Изменился статус";
       if (code === "task_updated") return "Изменение задачи";
       return "Изменение задачи";
+    }
+
+    function normalizeText(value) {
+      return String(value || "").toLowerCase().trim();
+    }
+
+    function getVisibleEvents() {
+      const query = normalizeText(searchInput ? searchInput.value : "");
+
+      if (!query) {
+        return events;
+      }
+
+      const compactQuery = query.replace(/[^a-z?-?0-9]/gi, "");
+
+      return events.filter(event => {
+        const issue = normalizeText(event.issue);
+        const compactIssue = issue.replace(/[^a-z?-?0-9]/gi, "");
+        const numberOnly = issue.replace(/[^0-9]/g, "");
+        const title = normalizeText(event.title);
+        const status = normalizeText(event.status);
+        const assignee = normalizeText(event.assignee);
+
+        return (
+          issue.includes(query) ||
+          compactIssue.includes(compactQuery) ||
+          numberOnly.includes(query) ||
+          title.includes(query) ||
+          status.includes(query) ||
+          assignee.includes(query)
+        );
+      });
+    }
+
+    function normalizeSearchValue(value) {
+      return String(value || "").toLowerCase().trim();
+    }
+
+    function getVisibleEvents() {
+      const query = normalizeSearchValue(searchInput ? searchInput.value : "");
+
+      if (!query) {
+        return events;
+      }
+
+      const compactQuery = query.replace(/[^a-z0-9]/gi, "");
+
+      return events.filter(event => {
+        const issue = normalizeSearchValue(event.issue);
+        const compactIssue = issue.replace(/[^a-z0-9]/gi, "");
+        const issueNumber = issue.replace(/[^0-9]/g, "");
+
+        return (
+          issue.includes(query) ||
+          compactIssue.includes(compactQuery) ||
+          issueNumber.includes(query)
+        );
+      });
     }
 
     function renderStats() {
@@ -414,19 +513,31 @@
     }
 
     function renderHistory() {
+      const visibleEvents = getVisibleEvents();
+
       historyEl.innerHTML = "";
 
       if (!events.length) {
         historyEl.innerHTML = `
           <div class="empty">
-            Пока событий нет. Когда webhook сработает, изменения появятся здесь.
+            &#1053;&#1077;&#1090; &#1079;&#1072;&#1076;&#1072;&#1095; &#1087;&#1086; &#1090;&#1072;&#1082;&#1086;&#1084;&#1091; &#1085;&#1086;&#1084;&#1077;&#1088;&#1091;.
           </div>
         `;
         renderStats();
         return;
       }
 
-      events.forEach(event => {
+      if (!visibleEvents.length) {
+        historyEl.innerHTML = `
+          <div class="empty">
+            &#1053;&#1077;&#1090; &#1079;&#1072;&#1076;&#1072;&#1095; &#1087;&#1086; &#1090;&#1072;&#1082;&#1086;&#1084;&#1091; &#1085;&#1086;&#1084;&#1077;&#1088;&#1091;.
+          </div>
+        `;
+        renderStats();
+        return;
+      }
+
+      visibleEvents.forEach(event => {
         historyEl.appendChild(createEventCard(event));
       });
 
@@ -507,6 +618,10 @@
 
       addEvent(demo);
       showToast(demo);
+    }
+
+    if (searchInput) {
+      searchInput.addEventListener("input", renderHistory);
     }
 
     loadHistory();
