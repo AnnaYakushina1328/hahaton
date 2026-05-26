@@ -47,6 +47,16 @@ def _calculate_risk(issue):
     try:
         task_dict = _build_task_dict(issue)
         score, level = predict_one(task_dict)
+        if score is not None and issue.description and "Risk prediction:" not in issue.description:
+            prediction_text = f"""
+
+        ---
+        🤖 Risk prediction:
+        Score: {score:.3f}
+        Level: {level}
+        """
+            issue.update(description=(issue.description or "") + prediction_text)
+            print(f"  ✅ Описание задачи {issue.key} обновлено")
         return score, level
     except Exception as error:
         print(f"[polling] risk calculation failed for {getattr(issue, 'key', 'unknown')}: {error}")
