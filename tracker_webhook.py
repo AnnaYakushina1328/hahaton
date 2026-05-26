@@ -4,6 +4,7 @@ from yandex_tracker_client import TrackerClient
 from predict import predict_one
 import os
 from dotenv import load_dotenv
+from tracker_polling import start_tracker_polling
 
 app = Flask(__name__)
 register_frontend(app)
@@ -18,6 +19,9 @@ client = TrackerClient(
     cloud_org_id=CLOUD_ORG_ID
 )
 
+start_tracker_polling(client, queue_key="CLIENT", interval_seconds=15)
+
+@app.route("/webhook", methods=["POST"])
 @app.route("/", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":

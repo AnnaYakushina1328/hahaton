@@ -61,3 +61,5 @@ maildir
 .env
 
 .venv/
+
+.env
