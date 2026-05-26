@@ -107,6 +107,31 @@
       font-weight: 700;
     }
 
+    .panel-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .export-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      border: 0;
+      background: #19a463;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .export-button:hover {
+      filter: brightness(0.96);
+    }
+
     .history {
       display: grid;
       gap: 12px;
@@ -301,9 +326,16 @@
     </section>
 
     <main class="panel">
-      <div class="panel-top">
-        <h2>История изменений</h2>
-        <button onclick="showDemoEvent()">Показать демо-триггер</button>
+            <div class="panel-top">
+        <h2>&#1048;&#1089;&#1090;&#1086;&#1088;&#1080;&#1103; &#1080;&#1079;&#1084;&#1077;&#1085;&#1077;&#1085;&#1080;&#1081;</h2>
+
+        <div class="panel-actions">
+          <a class="export-button" href="/api/history/export.xlsx" download>
+            &#1042;&#1099;&#1075;&#1088;&#1091;&#1079;&#1080;&#1090;&#1100; XLSX
+          </a>
+
+          <button onclick="showDemoEvent()">&#1055;&#1086;&#1082;&#1072;&#1079;&#1072;&#1090;&#1100; &#1076;&#1077;&#1084;&#1086;-&#1090;&#1088;&#1080;&#1075;&#1075;&#1077;&#1088;</button>
+        </div>
       </div>
 
       <div class="history" id="history">

@@ -66,3 +66,4 @@ maildir
 
 data/events_history.json
 data/events_history_export.csv
+data/events_history_export.xlsx
