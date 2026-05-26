@@ -335,6 +335,13 @@
       return "Риск не рассчитан";
     }
 
+    function triggerText(code) {
+      if (code === "new_task") return "Новая задача";
+      if (code === "status_changed") return "Изменился статус";
+      if (code === "task_updated") return "Изменение задачи";
+      return "Изменение задачи";
+    }
+
     function renderStats() {
       document.getElementById("totalCount").textContent = events.length;
 
@@ -360,7 +367,7 @@
         <div class="time">${event.time || ""}</div>
 
         <div class="main">
-          <strong>${event.trigger_label}: ${event.issue}</strong>
+          <strong>${triggerText(event.trigger_code)}: ${event.issue}</strong>
           <span>${event.title}</span>
           <span>Статус: ${event.status || "unknown"} · Исполнитель: ${event.assignee || "unknown"}</span>
         </div>
@@ -408,7 +415,7 @@
       toast.className = `toast ${riskClass(event.risk_level)}`;
 
       toast.innerHTML = `
-        <strong>${event.trigger_label}: ${event.issue}</strong>
+        <strong>${triggerText(event.trigger_code)}: ${event.issue}</strong>
         <p>${event.title}</p>
         <p>${riskText(event.risk_level)} · score ${score}</p>
       `;
