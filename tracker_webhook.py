@@ -1,3 +1,5 @@
+import json
+import urllib.request
 from frontend_state import register_frontend, record_tracker_event
 from flask import Flask, request
 from yandex_tracker_client import TrackerClient
@@ -15,12 +17,69 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 CLOUD_ORG_ID = os.getenv("CLOUD_ORG_ID")
 
+ORG_ID = os.getenv("ORG_ID")
+
+
+def get_tracker_queue_keys():
+    manual_queues = os.getenv("TRACKER_QUEUES", "").strip()
+
+    if manual_queues:
+        queues = [
+            queue.strip().upper()
+            for queue in manual_queues.split(",")
+            if queue.strip()
+        ]
+
+        print(f"[queues] loaded from env: {', '.join(queues)}")
+        return queues
+
+    headers = {
+        "Authorization": f"OAuth {TOKEN}",
+    }
+
+    if CLOUD_ORG_ID:
+        headers["X-Cloud-Org-ID"] = CLOUD_ORG_ID
+    elif ORG_ID:
+        headers["X-Org-ID"] = ORG_ID
+
+    request = urllib.request.Request(
+        "https://api.tracker.yandex.net/v3/queues/?perPage=100",
+        headers=headers,
+        method="GET",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = response.read().decode("utf-8")
+
+        queues_data = json.loads(data)
+
+        queues = [
+            queue.get("key")
+            for queue in queues_data
+            if queue.get("key")
+        ]
+
+        queues = [queue.upper() for queue in queues]
+
+        print(f"[queues] loaded from tracker: {', '.join(queues)}")
+
+        return queues or ["CLIENT"]
+
+    except Exception as error:
+        print(f"[queues] failed to load queues from tracker: {error}")
+        print("[queues] fallback to CLIENT")
+
+        return ["CLIENT"]
+
 client = TrackerClient(
     token=TOKEN,
     cloud_org_id=CLOUD_ORG_ID
 )
 
-start_tracker_polling(client, queue_key="CLIENT", interval_seconds=30)
+TRACKER_QUEUES = get_tracker_queue_keys()
+
+start_tracker_polling(client, queue_key=TRACKER_QUEUES, interval_seconds=30)
 
 @app.route("/webhook", methods=["POST"])
 @app.route("/", methods=["GET", "POST"])
