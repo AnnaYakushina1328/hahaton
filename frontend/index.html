@@ -197,6 +197,33 @@
       line-height: 1.4;
     }
 
+    .llm-box {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 14px;
+      background: #f3f6ff;
+      border: 1px solid #dde7ff;
+      color: #172033;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .llm-box strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .llm-row {
+      margin-top: 5px;
+      color: #52617a;
+    }
+
+    .llm-row span {
+      font-weight: 700;
+      color: #172033;
+    }
+
     .badges {
       display: flex;
       flex-wrap: wrap;
@@ -312,7 +339,34 @@
         grid-template-columns: 1fr;
       }
 
-      .badges {
+      .llm-box {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 14px;
+      background: #f3f6ff;
+      border: 1px solid #dde7ff;
+      color: #172033;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .llm-box strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .llm-row {
+      margin-top: 5px;
+      color: #52617a;
+    }
+
+    .llm-row span {
+      font-weight: 700;
+      color: #172033;
+    }
+
+    .badges {
         justify-content: flex-start;
       }
 
@@ -794,6 +848,116 @@
       });
     </script>
     <!-- FINAL_FILTER_PATCH_END -->
+
+
+    <!-- FINAL_LLM_CARD_PATCH_START -->
+    <script>
+      function dashboardEscape(value) {
+        return String(value || "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function dashboardJoinList(value) {
+        if (!value) {
+          return "";
+        }
+
+        if (Array.isArray(value)) {
+          return value.map(item => dashboardEscape(item)).join("<br>");
+        }
+
+        return dashboardEscape(value);
+      }
+
+      function dashboardRiskText(level) {
+        if (level === "high") return "&#1042;&#1099;&#1089;&#1086;&#1082;&#1080;&#1081; &#1088;&#1080;&#1089;&#1082;";
+        if (level === "medium") return "&#1057;&#1088;&#1077;&#1076;&#1085;&#1080;&#1081; &#1088;&#1080;&#1089;&#1082;";
+        if (level === "low") return "&#1053;&#1080;&#1079;&#1082;&#1080;&#1081; &#1088;&#1080;&#1089;&#1082;";
+        return "&#1056;&#1080;&#1089;&#1082; &#1085;&#1077; &#1088;&#1072;&#1089;&#1089;&#1095;&#1080;&#1090;&#1072;&#1085;";
+      }
+
+      function dashboardTriggerText(code) {
+        if (code === "new_task") return "&#1053;&#1086;&#1074;&#1072;&#1103; &#1079;&#1072;&#1076;&#1072;&#1095;&#1072;";
+        if (code === "status_changed") return "&#1048;&#1079;&#1084;&#1077;&#1085;&#1080;&#1083;&#1089;&#1103; &#1089;&#1090;&#1072;&#1090;&#1091;&#1089;";
+        if (code === "task_updated") return "&#1048;&#1079;&#1084;&#1077;&#1085;&#1077;&#1085;&#1080;&#1077; &#1079;&#1072;&#1076;&#1072;&#1095;&#1080;";
+        return "&#1048;&#1079;&#1084;&#1077;&#1085;&#1077;&#1085;&#1080;&#1077; &#1079;&#1072;&#1076;&#1072;&#1095;&#1080;";
+      }
+
+      function createEventCard(event) {
+        const score = event.risk_score === null || event.risk_score === undefined
+          ? "?"
+          : event.risk_score;
+
+        const llm = event.llm_analysis || null;
+
+        let llmBlock = "";
+
+        if (llm) {
+          const reasons = dashboardJoinList(llm.risk_reasons);
+          const recommendations = dashboardJoinList(llm.recommendations);
+
+          llmBlock = `
+            <div class="llm-box">
+              <strong>LLM-&#1072;&#1085;&#1072;&#1083;&#1080;&#1079; &#1086;&#1087;&#1080;&#1089;&#1072;&#1085;&#1080;&#1103;</strong>
+
+              <div class="llm-row">
+                <span>&#1055;&#1086;&#1085;&#1103;&#1090;&#1085;&#1086;&#1089;&#1090;&#1100;:</span>
+                ${dashboardEscape(llm.clarity_score)}
+              </div>
+
+              <div class="llm-row">
+                <span>&#1056;&#1080;&#1089;&#1082; &#1087;&#1086; LLM:</span>
+                ${dashboardEscape(llm.risk_level)}
+              </div>
+
+              <div class="llm-row">
+                <span>&#1050;&#1086;&#1084;&#1084;&#1077;&#1085;&#1090;&#1072;&#1088;&#1080;&#1081;:</span>
+                ${dashboardEscape(llm.clarity_comment)}
+              </div>
+
+              ${reasons ? `
+                <div class="llm-row">
+                  <span>&#1055;&#1088;&#1080;&#1095;&#1080;&#1085;&#1099; &#1088;&#1080;&#1089;&#1082;&#1072;:</span><br>
+                  ${reasons}
+                </div>
+              ` : ""}
+
+              ${recommendations ? `
+                <div class="llm-row">
+                  <span>&#1056;&#1077;&#1082;&#1086;&#1084;&#1077;&#1085;&#1076;&#1072;&#1094;&#1080;&#1080;:</span><br>
+                  ${recommendations}
+                </div>
+              ` : ""}
+            </div>
+          `;
+        }
+
+        const card = document.createElement("div");
+        card.className = "event";
+
+        card.innerHTML = `
+          <div class="time">${dashboardEscape(event.time || "")}</div>
+
+          <div class="main">
+            <strong>${dashboardTriggerText(event.trigger_code)}: ${dashboardEscape(event.issue)}</strong>
+            <span>${dashboardEscape(event.title)}</span>
+            <span>&#1057;&#1090;&#1072;&#1090;&#1091;&#1089;: ${dashboardEscape(event.status || "unknown")} ? &#1048;&#1089;&#1087;&#1086;&#1083;&#1085;&#1080;&#1090;&#1077;&#1083;&#1100;: ${dashboardEscape(event.assignee || "unknown")}</span>
+            ${llmBlock}
+          </div>
+
+          <div class="badges">
+            <div class="badge ${riskClass(event.risk_level)}">${dashboardRiskText(event.risk_level)}</div>
+            <div class="badge">score ${dashboardEscape(score)}</div>
+          </div>
+        `;
+
+        return card;
+      }
+    </script>
+    <!-- FINAL_LLM_CARD_PATCH_END -->
 
 </body>
 </html>

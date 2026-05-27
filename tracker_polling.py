@@ -3,6 +3,10 @@ import time
 
 from frontend_state import record_tracker_event
 from predict import predict_one
+from task_analyzer import analyze_tracker_task
+
+
+LLM_MARKER = "LLM analysis:"
 
 
 def _safe_get(value, attr_name, default=None):
@@ -47,23 +51,119 @@ def _calculate_risk(issue):
     try:
         task_dict = _build_task_dict(issue)
         score, level = predict_one(task_dict)
-        if score is not None and issue.description and "Risk prediction:" not in issue.description:
-            prediction_text = f"""
-
-        ---
-        🤖 Risk prediction:
-        Score: {score:.3f}
-        Level: {level}
-        """
-            issue.update(description=(issue.description or "") + prediction_text)
-            print(f"  ✅ Описание задачи {issue.key} обновлено")
         return score, level
     except Exception as error:
         print(f"[polling] risk calculation failed for {getattr(issue, 'key', 'unknown')}: {error}")
         return None, "unknown"
 
 
-def _poll_tracker(client, queue_key="CLIENT", interval_seconds=15, per_page=50):
+def _analyze_description_with_llm(issue):
+    try:
+        summary = getattr(issue, "summary", "") or ""
+        description = getattr(issue, "description", "") or ""
+
+        result = analyze_tracker_task(summary, description)
+
+        print(f"[polling] llm analysis completed for {getattr(issue, 'key', 'unknown')}")
+
+        return result
+
+    except Exception as error:
+        print(f"[polling] llm analysis failed for {getattr(issue, 'key', 'unknown')}: {error}")
+
+        return {
+            "clarity_score": "ошибка",
+            "clarity_comment": f"Не удалось выполнить LLM-анализ: {error}",
+            "risk_level": "желтый",
+            "risk_reasons": ["Ошибка LLM-анализа"],
+            "recommendations": ["Проверить GEMINI_API_KEY и доступ к Gemini API"],
+        }
+
+
+def _list_to_text(items):
+    if not items:
+        return "- нет данных"
+
+    if isinstance(items, list):
+        return "\n".join(f"- {item}" for item in items)
+
+    return f"- {items}"
+
+
+def _format_llm_analysis_for_tracker(llm_analysis):
+    if not llm_analysis:
+        return ""
+
+    clarity_score = llm_analysis.get("clarity_score", "")
+    clarity_comment = llm_analysis.get("clarity_comment", "")
+    risk_level = llm_analysis.get("risk_level", "")
+    risk_reasons = _list_to_text(llm_analysis.get("risk_reasons", []))
+    recommendations = _list_to_text(llm_analysis.get("recommendations", []))
+
+    return f"""
+
+---
+LLM analysis:
+
+Clarity score: {clarity_score}
+
+Risk level: {risk_level}
+
+Comment:
+{clarity_comment}
+
+Risk reasons:
+{risk_reasons}
+
+Recommendations:
+{recommendations}
+"""
+
+
+def _append_llm_analysis_to_issue(issue, llm_analysis):
+    try:
+        current_description = getattr(issue, "description", "") or ""
+
+        if LLM_MARKER in current_description:
+            return
+
+        formatted_analysis = _format_llm_analysis_for_tracker(llm_analysis)
+
+        if not formatted_analysis:
+            return
+
+        issue.update(
+            description=current_description + formatted_analysis
+        )
+
+        print(f"[polling] llm analysis added to tracker issue {getattr(issue, 'key', 'unknown')}")
+
+    except Exception as error:
+        print(f"[polling] failed to update tracker issue {getattr(issue, 'key', 'unknown')}: {error}")
+
+
+def _record_tracker_change(issue_key, issue, event_code, queue_key):
+    score, level = _calculate_risk(issue)
+    llm_analysis = _analyze_description_with_llm(issue)
+
+    event = record_tracker_event(
+        issue_key=issue_key,
+        issue=issue,
+        data={
+            "event": event_code,
+            "queue": queue_key,
+            "llm_analysis": llm_analysis,
+        },
+        score=score,
+        level=level,
+    )
+
+    _append_llm_analysis_to_issue(issue, llm_analysis)
+
+    return event
+
+
+def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=15, per_page=50):
     print(f"[polling] started for queue {queue_key}, interval {interval_seconds}s")
 
     previous = {}
@@ -96,65 +196,84 @@ def _poll_tracker(client, queue_key="CLIENT", interval_seconds=15, per_page=50):
                 old_snapshot = previous.get(issue_key)
 
                 if old_snapshot is None:
-                    score, level = _calculate_risk(issue)
-
-                    record_tracker_event(
+                    _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
-                        data={"event": "new_task"},
-                        score=score,
-                        level=level,
+                        event_code="new_task",
+                        queue_key=queue_key,
                     )
 
-                    print(f"[polling] new task: {issue_key}")
+                    print(f"[polling] new task in {queue_key}: {issue_key}")
                     continue
 
                 if old_snapshot.get("status") != snapshot.get("status"):
-                    score, level = _calculate_risk(issue)
-
-                    record_tracker_event(
+                    _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
-                        data={"event": "status_changed"},
-                        score=score,
-                        level=level,
+                        event_code="status_changed",
+                        queue_key=queue_key,
                     )
 
-                    print(f"[polling] status changed: {issue_key}")
+                    print(f"[polling] status changed in {queue_key}: {issue_key}")
                     continue
 
                 if old_snapshot.get("updated_at") != snapshot.get("updated_at"):
-                    score, level = _calculate_risk(issue)
-
-                    record_tracker_event(
+                    _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
-                        data={"event": "task_updated"},
-                        score=score,
-                        level=level,
+                        event_code="task_updated",
+                        queue_key=queue_key,
                     )
 
-                    print(f"[polling] task updated: {issue_key}")
+                    print(f"[polling] task updated in {queue_key}: {issue_key}")
 
             previous = current
             first_run = False
 
         except Exception as error:
-            print(f"[polling] error: {error}")
+            print(f"[polling] error in queue {queue_key}: {error}")
 
         time.sleep(interval_seconds)
 
 
-def start_tracker_polling(client, queue_key="CLIENT", interval_seconds=15):
-    thread = threading.Thread(
-        target=_poll_tracker,
-        kwargs={
-            "client": client,
-            "queue_key": queue_key,
-            "interval_seconds": interval_seconds,
-        },
-        daemon=True,
-    )
+def start_tracker_polling(client, queue_keys=None, interval_seconds=15):
+    if queue_keys is None:
+        queue_keys = ["CLIENT"]
 
-    thread.start()
-    return thread
+    if isinstance(queue_keys, str):
+        queue_keys = [queue_keys]
+
+    prepared_queue_keys = []
+    seen_queue_keys = set()
+
+    for queue_key in queue_keys:
+        prepared_queue_key = queue_key.strip().upper()
+
+        if not prepared_queue_key or prepared_queue_key in seen_queue_keys:
+            continue
+
+        prepared_queue_keys.append(prepared_queue_key)
+        seen_queue_keys.add(prepared_queue_key)
+
+    if not prepared_queue_keys:
+        prepared_queue_keys = ["CLIENT"]
+
+    threads = []
+
+    for queue_key in prepared_queue_keys:
+        thread = threading.Thread(
+            target=_poll_tracker_queue,
+            kwargs={
+                "client": client,
+                "queue_key": queue_key,
+                "interval_seconds": interval_seconds,
+            },
+            daemon=True,
+        )
+
+        thread.start()
+        threads.append(thread)
+
+    print(f"[polling] active queues: {', '.join(prepared_queue_keys)}")
+
+    return threads
