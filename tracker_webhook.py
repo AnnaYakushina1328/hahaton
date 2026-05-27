@@ -6,7 +6,7 @@ from yandex_tracker_client import TrackerClient
 from predict import predict_one
 import os
 from dotenv import load_dotenv
-from tracker_polling import start_tracker_polling
+from tracker_polling import start_tracker_queue_discovery
 import time
 
 app = Flask(__name__)
@@ -77,9 +77,12 @@ client = TrackerClient(
     cloud_org_id=CLOUD_ORG_ID
 )
 
-TRACKER_QUEUES = get_tracker_queue_keys()
-
-start_tracker_polling(client, queue_keys=TRACKER_QUEUES, interval_seconds=30)
+start_tracker_queue_discovery(
+    client=client,
+    load_queue_keys=get_tracker_queue_keys,
+    queue_refresh_interval_seconds=60,
+    polling_interval_seconds=30,
+)
 
 @app.route("/webhook", methods=["POST"])
 @app.route("/", methods=["GET", "POST"])

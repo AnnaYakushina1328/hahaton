@@ -8,6 +8,9 @@ from task_analyzer import analyze_tracker_task
 
 LLM_MARKER = "LLM analysis:"
 
+active_polling_threads = {}
+active_polling_lock = threading.Lock()
+
 
 def _safe_get(value, attr_name, default=None):
     return getattr(value, attr_name, default) if value else default
@@ -125,21 +128,23 @@ def _append_llm_analysis_to_issue(issue, llm_analysis):
         current_description = getattr(issue, "description", "") or ""
 
         if LLM_MARKER in current_description:
-            return
+            return False
 
         formatted_analysis = _format_llm_analysis_for_tracker(llm_analysis)
 
         if not formatted_analysis:
-            return
+            return False
 
         issue.update(
             description=current_description + formatted_analysis
         )
 
         print(f"[polling] llm analysis added to tracker issue {getattr(issue, 'key', 'unknown')}")
+        return True
 
     except Exception as error:
         print(f"[polling] failed to update tracker issue {getattr(issue, 'key', 'unknown')}: {error}")
+        return False
 
 
 def _record_tracker_change(issue_key, issue, event_code, queue_key):
@@ -158,12 +163,12 @@ def _record_tracker_change(issue_key, issue, event_code, queue_key):
         level=level,
     )
 
-    _append_llm_analysis_to_issue(issue, llm_analysis)
+    issue_was_updated_by_us = _append_llm_analysis_to_issue(issue, llm_analysis)
 
-    return event
+    return event, issue_was_updated_by_us
 
 
-def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=15, per_page=50):
+def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=30, per_page=50):
     print(f"[polling] started for queue {queue_key}, interval {interval_seconds}s")
 
     previous = {}
@@ -197,31 +202,32 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=15, per_pag
                 old_snapshot = previous.get(issue_key)
 
                 if old_snapshot is None:
-                    _record_tracker_change(
+                    _, issue_was_updated_by_us = _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
                         event_code="new_task",
                         queue_key=queue_key,
                     )
 
-                    self_updated_issues.add(issue_key)
+                    if issue_was_updated_by_us:
+                        self_updated_issues.add(issue_key)
 
                     print(f"[polling] new task in {queue_key}: {issue_key}")
                     continue
 
                 if old_snapshot.get("status") != snapshot.get("status"):
-                    _record_tracker_change(
+                    _, issue_was_updated_by_us = _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
                         event_code="status_changed",
                         queue_key=queue_key,
                     )
 
-                    self_updated_issues.add(issue_key)
+                    if issue_was_updated_by_us:
+                        self_updated_issues.add(issue_key)
 
                     print(f"[polling] status changed in {queue_key}: {issue_key}")
                     continue
-
 
                 if old_snapshot.get("updated_at") != snapshot.get("updated_at"):
                     if issue_key in self_updated_issues:
@@ -229,14 +235,15 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=15, per_pag
                         print(f"[polling] skipped self update in {queue_key}: {issue_key}")
                         continue
 
-                    _record_tracker_change(
+                    _, issue_was_updated_by_us = _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
                         event_code="task_updated",
                         queue_key=queue_key,
                     )
 
-                    self_updated_issues.add(issue_key)
+                    if issue_was_updated_by_us:
+                        self_updated_issues.add(issue_key)
 
                     print(f"[polling] task updated in {queue_key}: {issue_key}")
 
@@ -249,9 +256,9 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=15, per_pag
         time.sleep(interval_seconds)
 
 
-def start_tracker_polling(client, queue_keys=None, interval_seconds=15):
+def _prepare_queue_keys(queue_keys):
     if queue_keys is None:
-        queue_keys = ["CLIENT"]
+        return []
 
     if isinstance(queue_keys, str):
         queue_keys = [queue_keys]
@@ -260,7 +267,7 @@ def start_tracker_polling(client, queue_keys=None, interval_seconds=15):
     seen_queue_keys = set()
 
     for queue_key in queue_keys:
-        prepared_queue_key = queue_key.strip().upper()
+        prepared_queue_key = str(queue_key).strip().upper()
 
         if not prepared_queue_key or prepared_queue_key in seen_queue_keys:
             continue
@@ -268,25 +275,99 @@ def start_tracker_polling(client, queue_keys=None, interval_seconds=15):
         prepared_queue_keys.append(prepared_queue_key)
         seen_queue_keys.add(prepared_queue_key)
 
+    return prepared_queue_keys
+
+
+def start_tracker_polling(client, queue_keys=None, interval_seconds=30):
+    prepared_queue_keys = _prepare_queue_keys(queue_keys)
+
     if not prepared_queue_keys:
         prepared_queue_keys = ["CLIENT"]
 
-    threads = []
+    started_queues = []
 
-    for queue_key in prepared_queue_keys:
-        thread = threading.Thread(
-            target=_poll_tracker_queue,
-            kwargs={
-                "client": client,
-                "queue_key": queue_key,
-                "interval_seconds": interval_seconds,
-            },
-            daemon=True,
-        )
+    with active_polling_lock:
+        for queue_key in prepared_queue_keys:
+            existing_thread = active_polling_threads.get(queue_key)
 
-        thread.start()
-        threads.append(thread)
+            if existing_thread and existing_thread.is_alive():
+                continue
 
-    print(f"[polling] active queues: {', '.join(prepared_queue_keys)}")
+            thread = threading.Thread(
+                target=_poll_tracker_queue,
+                kwargs={
+                    "client": client,
+                    "queue_key": queue_key,
+                    "interval_seconds": interval_seconds,
+                },
+                daemon=True,
+            )
 
-    return threads
+            thread.start()
+            active_polling_threads[queue_key] = thread
+            started_queues.append(queue_key)
+
+    if started_queues:
+        print(f"[polling] started new queues: {', '.join(started_queues)}")
+
+    active_queues = sorted(active_polling_threads.keys())
+
+    print(f"[polling] active queues: {', '.join(active_queues)}")
+
+    return active_polling_threads
+
+
+def _queue_discovery_loop(
+    client,
+    load_queue_keys,
+    queue_refresh_interval_seconds=60,
+    polling_interval_seconds=30,
+):
+    while True:
+        try:
+            queue_keys = load_queue_keys()
+
+            print(f"[queues] refresh found: {', '.join(queue_keys)}")
+
+            start_tracker_polling(
+                client=client,
+                queue_keys=queue_keys,
+                interval_seconds=polling_interval_seconds,
+            )
+
+        except Exception as error:
+            print(f"[queues] refresh failed: {error}")
+
+        time.sleep(queue_refresh_interval_seconds)
+
+
+def start_tracker_queue_discovery(
+    client,
+    load_queue_keys,
+    queue_refresh_interval_seconds=60,
+    polling_interval_seconds=30,
+):
+    initial_queue_keys = load_queue_keys()
+
+    start_tracker_polling(
+        client=client,
+        queue_keys=initial_queue_keys,
+        interval_seconds=polling_interval_seconds,
+    )
+
+    discovery_thread = threading.Thread(
+        target=_queue_discovery_loop,
+        kwargs={
+            "client": client,
+            "load_queue_keys": load_queue_keys,
+            "queue_refresh_interval_seconds": queue_refresh_interval_seconds,
+            "polling_interval_seconds": polling_interval_seconds,
+        },
+        daemon=True,
+    )
+
+    discovery_thread.start()
+
+    print(f"[queues] auto discovery started, interval {queue_refresh_interval_seconds}s")
+
+    return discovery_thread
