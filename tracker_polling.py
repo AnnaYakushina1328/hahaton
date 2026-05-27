@@ -14,7 +14,7 @@ active_polling_lock = threading.Lock()
 
 
 def _safe_get(value, attr_name, default=None):
-    return getattr(value, attr_name, default) if value else default
+    return getattr(value, attr_name, default) if value else default 
 
 
 def _get_display(value, default="unknown"):
