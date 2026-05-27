@@ -102,8 +102,24 @@ def _push_event(event):
             subscribers.remove(subscriber)
 
 
+def _join_value(value):
+    if value is None:
+        return ""
+
+    if isinstance(value, list):
+        return " | ".join(str(item) for item in value)
+
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+
+    return str(value)
+
+
 def record_tracker_event(issue_key, issue=None, data=None, score=None, level=None, already_processed=False):
+    data = data or {}
+
     trigger_code, trigger_label = _detect_trigger(data)
+    llm_analysis = data.get("llm_analysis")
 
     event = {
         "id": f"{issue_key}-{datetime.now().timestamp()}",
@@ -116,6 +132,7 @@ def record_tracker_event(issue_key, issue=None, data=None, score=None, level=Non
         "assignee": _safe_display(getattr(issue, "assignee", None)),
         "risk_score": round(float(score), 3) if score is not None else None,
         "risk_level": level or "unknown",
+        "llm_analysis": llm_analysis,
         "already_processed": already_processed,
     }
 
@@ -149,20 +166,29 @@ def register_frontend(app):
             "assignee",
             "risk_score",
             "risk_level",
+            "llm_clarity_score",
+            "llm_clarity_comment",
+            "llm_risk_level",
+            "llm_risk_reasons",
+            "llm_recommendations",
             "already_processed",
         ]
 
-        with export_file.open("w", encoding="cp1251", newline="") as file:
+        with export_file.open("w", encoding="cp1251", errors="replace", newline="") as file:
             file.write("sep=;\n")
+
             writer = csv.DictWriter(
                 file,
                 fieldnames=fieldnames,
                 delimiter=";",
                 lineterminator="\n",
             )
+
             writer.writeheader()
 
             for event in history:
+                llm_analysis = event.get("llm_analysis") or {}
+
                 writer.writerow({
                     "time": event.get("time", ""),
                     "trigger_code": event.get("trigger_code", ""),
@@ -172,10 +198,15 @@ def register_frontend(app):
                     "assignee": event.get("assignee", ""),
                     "risk_score": event.get("risk_score", ""),
                     "risk_level": event.get("risk_level", ""),
+                    "llm_clarity_score": llm_analysis.get("clarity_score", ""),
+                    "llm_clarity_comment": llm_analysis.get("clarity_comment", ""),
+                    "llm_risk_level": llm_analysis.get("risk_level", ""),
+                    "llm_risk_reasons": _join_value(llm_analysis.get("risk_reasons", "")),
+                    "llm_recommendations": _join_value(llm_analysis.get("recommendations", "")),
                     "already_processed": event.get("already_processed", ""),
                 })
 
-        return send_from_directory(DATA_DIR, export_file.name, as_attachment=True)
+        return send_from_directory(str(DATA_DIR), export_file.name, as_attachment=True)
 
     @app.get("/api/history/export.xlsx")
     def export_history_xlsx():
@@ -188,33 +219,40 @@ def register_frontend(app):
         sheet.title = "Events History"
 
         headers = [
-            "\u0412\u0440\u0435\u043c\u044f",
-            "\u0421\u043e\u0431\u044b\u0442\u0438\u0435",
-            "\u0417\u0430\u0434\u0430\u0447\u0430",
-            "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435",
-            "\u0421\u0442\u0430\u0442\u0443\u0441",
-            "\u0418\u0441\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c",
+            "Время",
+            "Событие",
+            "Задача",
+            "Название",
+            "Статус",
+            "Исполнитель",
             "Risk score",
-            "\u0423\u0440\u043e\u0432\u0435\u043d\u044c \u0440\u0438\u0441\u043a\u0430",
-            "\u0423\u0436\u0435 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u043e",
+            "Уровень риска",
+            "LLM: понятность",
+            "LLM: комментарий",
+            "LLM: риск",
+            "LLM: причины риска",
+            "LLM: рекомендации",
+            "Уже обработано",
         ]
 
         trigger_labels = {
-            "new_task": "\u041d\u043e\u0432\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430",
-            "status_changed": "\u0418\u0437\u043c\u0435\u043d\u0438\u043b\u0441\u044f \u0441\u0442\u0430\u0442\u0443\u0441",
-            "task_updated": "\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438",
+            "new_task": "Новая задача",
+            "status_changed": "Изменился статус",
+            "task_updated": "Изменение задачи",
         }
 
         risk_labels = {
-            "low": "\u041d\u0438\u0437\u043a\u0438\u0439",
-            "medium": "\u0421\u0440\u0435\u0434\u043d\u0438\u0439",
-            "high": "\u0412\u044b\u0441\u043e\u043a\u0438\u0439",
-            "unknown": "\u041d\u0435 \u0440\u0430\u0441\u0441\u0447\u0438\u0442\u0430\u043d",
+            "low": "Низкий",
+            "medium": "Средний",
+            "high": "Высокий",
+            "unknown": "Не рассчитан",
         }
 
         sheet.append(headers)
 
         for event in history:
+            llm_analysis = event.get("llm_analysis") or {}
+
             trigger_code = event.get("trigger_code", "")
             risk_level = event.get("risk_level", "")
 
@@ -227,19 +265,29 @@ def register_frontend(app):
                 event.get("assignee", ""),
                 event.get("risk_score", ""),
                 risk_labels.get(risk_level, risk_level),
-                "\u0414\u0430" if event.get("already_processed") else "\u041d\u0435\u0442",
+                llm_analysis.get("clarity_score", ""),
+                llm_analysis.get("clarity_comment", ""),
+                llm_analysis.get("risk_level", ""),
+                _join_value(llm_analysis.get("risk_reasons", "")),
+                _join_value(llm_analysis.get("recommendations", "")),
+                "Да" if event.get("already_processed") else "Нет",
             ])
 
         column_widths = {
             "A": 22,
             "B": 24,
-            "C": 14,
-            "D": 38,
+            "C": 18,
+            "D": 40,
             "E": 22,
             "F": 24,
             "G": 12,
             "H": 18,
-            "I": 20,
+            "I": 18,
+            "J": 60,
+            "K": 16,
+            "L": 70,
+            "M": 80,
+            "N": 18,
         }
 
         for column, width in column_widths.items():
@@ -263,7 +311,7 @@ def register_frontend(app):
 
         workbook.save(export_file)
 
-        return send_from_directory(DATA_DIR, export_file.name, as_attachment=True)
+        return send_from_directory(str(DATA_DIR), export_file.name, as_attachment=True)
 
     @app.get("/events")
     def events():
@@ -278,7 +326,7 @@ def register_frontend(app):
 
                 while True:
                     try:
-                        event = subscriber.get(timeout=30)
+                        event = subscriber.get(timeout=15)
                         payload = json.dumps(event, ensure_ascii=False)
                         yield f"data: {payload}\n\n"
                     except Empty:

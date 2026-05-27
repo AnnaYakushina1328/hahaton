@@ -79,7 +79,7 @@ client = TrackerClient(
 
 TRACKER_QUEUES = get_tracker_queue_keys()
 
-start_tracker_polling(client, queue_key=TRACKER_QUEUES, interval_seconds=30)
+start_tracker_polling(client, queue_keys=TRACKER_QUEUES, interval_seconds=30)
 
 @app.route("/webhook", methods=["POST"])
 @app.route("/", methods=["GET", "POST"])
@@ -164,4 +164,4 @@ Level: {level}
         return {"error": str(e)}, 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    app.run(host="0.0.0.0", port=8080, debug=True, use_reloader=False)
