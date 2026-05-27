@@ -168,6 +168,7 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=15, per_pag
 
     previous = {}
     first_run = True
+    self_updated_issues = set()
 
     while True:
         try:
@@ -203,6 +204,8 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=15, per_pag
                         queue_key=queue_key,
                     )
 
+                    self_updated_issues.add(issue_key)
+
                     print(f"[polling] new task in {queue_key}: {issue_key}")
                     continue
 
@@ -214,16 +217,26 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=15, per_pag
                         queue_key=queue_key,
                     )
 
+                    self_updated_issues.add(issue_key)
+
                     print(f"[polling] status changed in {queue_key}: {issue_key}")
                     continue
 
+
                 if old_snapshot.get("updated_at") != snapshot.get("updated_at"):
+                    if issue_key in self_updated_issues:
+                        self_updated_issues.remove(issue_key)
+                        print(f"[polling] skipped self update in {queue_key}: {issue_key}")
+                        continue
+
                     _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
                         event_code="task_updated",
                         queue_key=queue_key,
                     )
+
+                    self_updated_issues.add(issue_key)
 
                     print(f"[polling] task updated in {queue_key}: {issue_key}")
 
