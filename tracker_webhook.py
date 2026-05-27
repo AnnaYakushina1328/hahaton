@@ -16,7 +16,6 @@ load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
 CLOUD_ORG_ID = os.getenv("CLOUD_ORG_ID")
-
 ORG_ID = os.getenv("ORG_ID")
 
 
@@ -72,6 +71,7 @@ def get_tracker_queue_keys():
 
         return ["CLIENT"]
 
+
 client = TrackerClient(
     token=TOKEN,
     cloud_org_id=CLOUD_ORG_ID
@@ -83,6 +83,7 @@ start_tracker_queue_discovery(
     queue_refresh_interval_seconds=60,
     polling_interval_seconds=30,
 )
+
 
 @app.route("/webhook", methods=["POST"])
 @app.route("/", methods=["GET", "POST"])
@@ -103,7 +104,7 @@ def webhook():
         print(f"📄 Задача найдена: {issue.summary}")
 
         # защита от повторной обработки
-        if issue.description and "Risk prediction:" in issue.description:
+        if issue.description and "📝 Анализ описания задачи:" in issue.description:
             print(f"⚠️ Задача {issue_key} уже обработана ранее")
             event = record_tracker_event(
                 issue_key=issue_key,
@@ -119,6 +120,7 @@ def webhook():
         
         else: 
             print(f"🔄 Рассчитываем риск для задачи {issue_key}")
+            
             task_dict = {
                 "title": issue.summary or "",
                 "description": issue.description or "",
@@ -130,41 +132,66 @@ def webhook():
                 "task_type": issue.type.key if issue.type else "task",
             }
 
-            score, level = predict_one(task_dict)
-            print(f"📊 Результат: Score={score:.3f}, Level={level}")
-
-            prediction_text = f"""
+            result = predict_one(task_dict)
+            
+            print(f"📊 Результат: Score={result['risk_score']:.3f}, Level={result['risk_level']}")
+            
+            # ТОЛЬКО ЭТО ИДЕТ В DESCRIPTION (только анализ описания)
+            description_block = f"""
 
 ---
-🤖 Risk prediction:
-Score: {score:.3f}
-Level: {level}
+📝 Анализ описания задачи:
+{result['analyzingTheTaskDescription']}
 """
 
+            # Обновляем описание задачи (только анализ описания)
             issue.update(
-                description=(issue.description or "") + prediction_text
+                description=(issue.description or "") + description_block
             )
-            print(f"✅ Описание задачи {issue_key} обновлено")
+            print(f"✅ Описание задачи {issue_key} обновлено (добавлен анализ описания)")
+
+            # Обновляем кастомные поля
+            try:
+                updates = {}
+                
+                # riskOfDeadlineFailure - сюда пишем Score и Level на русском
+                risk_text = f"Оценка риска срыва дедлайна: {result['risk_score']:.3f} (уровень: {result['risk_level']})"
+                updates["riskOfDeadlineFailure"] = risk_text
+                
+                # deadlineRecommendations - сюда пишем рекомендации
+                updates["deadlineRecommendations"] = result['deadlineRecommendations']
+                
+                # analyzingTheTaskDescription - сюда пишем оценку описания
+                updates["analyzingTheTaskDescription"] = result['analyzingTheTaskDescription']
+                
+                issue.update(**updates)
+                print(f"✅ Обновлены кастомные поля для задачи {issue_key}")
+            except Exception as e:
+                print(f"⚠️ Не удалось обновить кастомные поля: {e}")
 
             event = record_tracker_event(
                 issue_key=issue_key,
                 issue=issue,
                 data=data,
-                score=score,
-                level=level,
+                score=result['risk_score'],
+                level=result['risk_level'],
             )
 
             return {
                 "status": "success",
                 "issue": issue_key,
-                "risk_score": float(score),
-                "risk_level": level,
+                "risk_score": result['risk_score'],
+                "risk_level": result['risk_level'],
+                "riskOfDeadlineFailure": risk_text,
+                "deadlineRecommendations": result['deadlineRecommendations'],
+                "analyzingTheTaskDescription": result['analyzingTheTaskDescription'],
                 "event": event,
             }, 200
             
     except Exception as e:
         print(f"❌ Ошибка при обработке вебхука: {e}")
         return {"error": str(e)}, 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True, use_reloader=False)

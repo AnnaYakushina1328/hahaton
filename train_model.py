@@ -11,27 +11,35 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
 
-
 DATA_PATH = "zadachki_dataset(1).csv"
 MODEL_PATH = "deadline_risk_model.joblib"
 
 
 def prepare_dataset(path):
+    """Подготовка данных из CSV"""
     df = pd.read_csv(path)
 
+    # Целевая переменная
     df["deadline_failed"] = (df["deviation_days"] > 0).astype(int)
 
+    # Конвертация дат
     df["start_date_dt"] = pd.to_datetime(df["start_date"], dayfirst=True, errors="coerce")
     df["planned_end_date_dt"] = pd.to_datetime(df["planned_end_date"], dayfirst=True, errors="coerce")
 
+    # Вычисляем длительность
     df["planned_duration_days"] = (df["planned_end_date_dt"] - df["start_date_dt"]).dt.days
-    df["start_weekday"] = df["start_date_dt"].dt.weekday
-    df["planned_end_weekday"] = df["planned_end_date_dt"].dt.weekday
+    df["planned_duration_days"] = df["planned_duration_days"].fillna(0)
 
+    # День недели
+    df["start_weekday"] = df["start_date_dt"].dt.weekday.fillna(0).astype(int)
+    df["planned_end_weekday"] = df["planned_end_date_dt"].dt.weekday.fillna(0).astype(int)
+
+    # Длины текстов
     df["title_len"] = df["title"].fillna("").str.len()
     df["description_len"] = df["description"].fillna("").str.len()
     df["acceptance_len"] = df["acceptance_criteria"].fillna("").str.len()
 
+    # Объединяем все тексты
     df["text_all"] = df[["title", "description", "acceptance_criteria"]].fillna("").agg(" ".join, axis=1)
 
     features = [
@@ -51,6 +59,7 @@ def prepare_dataset(path):
 
 
 def build_model():
+    """Строит pipeline модели"""
     numeric_features = [
         "implementation_days",
         "planned_duration_days",
@@ -81,19 +90,18 @@ def build_model():
     ])
 
 
-def risk_level(score):
-    if score >= 0.70:
-        return "high"
-    if score >= 0.35:
-        return "medium"
-    return "low"
-
-
 def main():
+    print("📊 Загрузка данных...")
     X, y = prepare_dataset(DATA_PATH)
+    
+    print(f"✅ Данные загружены: {len(X)} строк")
+    print(f"   Положительный класс (срыв дедлайна): {sum(y)}")
+    print(f"   Отрицательный класс: {len(y) - sum(y)}")
 
     model = build_model()
 
+    # Cross-validation
+    print("\n🔄 5-fold Cross-Validation...")
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     scores = cross_validate(
         model,
@@ -103,11 +111,13 @@ def main():
         scoring=["accuracy", "precision", "recall", "f1", "roc_auc"],
     )
 
-    print("5-fold CV:")
+    print("Результаты 5-fold CV:")
     for metric, values in scores.items():
         if metric.startswith("test_"):
-            print(metric, round(values.mean(), 3), "+/-", round(values.std(), 3))
+            print(f"  {metric.replace('test_', '')}: {values.mean():.3f} +/- {values.std():.3f}")
 
+    # Holdout
+    print("\n📊 Holdout validation...")
     X_train, X_test, y_train, y_test = train_test_split(
         X,
         y,
@@ -121,18 +131,20 @@ def main():
     probs = model.predict_proba(X_test)[:, 1]
     preds = (probs >= 0.5).astype(int)
 
-    print("\nHoldout:")
-    print("accuracy:", round(accuracy_score(y_test, preds), 3))
-    print("precision:", round(precision_score(y_test, preds), 3))
-    print("recall:", round(recall_score(y_test, preds), 3))
-    print("f1:", round(f1_score(y_test, preds), 3))
-    print("roc_auc:", round(roc_auc_score(y_test, probs), 3))
-    print("confusion_matrix:", confusion_matrix(y_test, preds).tolist())
+    print("Holdout результаты:")
+    print(f"  accuracy: {accuracy_score(y_test, preds):.3f}")
+    print(f"  precision: {precision_score(y_test, preds):.3f}")
+    print(f"  recall: {recall_score(y_test, preds):.3f}")
+    print(f"  f1: {f1_score(y_test, preds):.3f}")
+    print(f"  roc_auc: {roc_auc_score(y_test, probs):.3f}")
+    print(f"  confusion_matrix: {confusion_matrix(y_test, preds).tolist()}")
 
+    # Обучаем на всех данных и сохраняем
+    print(f"\n💾 Обучение на всех данных и сохранение модели в {MODEL_PATH}...")
     model.fit(X, y)
     joblib.dump(model, MODEL_PATH)
 
-    print("\nSaved:", MODEL_PATH)
+    print("✅ Модель успешно обучена и сохранена!")
 
 
 if __name__ == "__main__":
