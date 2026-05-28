@@ -34,7 +34,7 @@ def _load_history_from_file():
             for event in events[-MAX_HISTORY_SIZE:]:
                 history.append(event)
 
-        print(f"[history] loaded {len(history)} events from {HISTORY_FILE}")
+        print(f"[history] загружено {len(history)} событий из {HISTORY_FILE}")
     except Exception as error:
         print(f"[history] failed to load history: {error}")
 
