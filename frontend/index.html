@@ -374,6 +374,68 @@
         width: calc(100vw - 40px);
       }
     }
+  
+    .clear-history-button {
+      border: 0;
+      background: #ef4444;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .clear-history-panel {
+      display: none;
+      margin-bottom: 16px;
+      padding: 14px;
+      border: 1px solid #ffd1d1;
+      background: #fff7f7;
+      border-radius: 16px;
+    }
+
+    .clear-history-panel.open {
+      display: block;
+    }
+
+    .clear-history-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .clear-history-field {
+      display: grid;
+      gap: 6px;
+      color: #52617a;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .clear-history-field input {
+      border: 1px solid #dde3ef;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      color: #172033;
+      background: white;
+    }
+
+    .clear-history-danger {
+      background: #ef4444;
+    }
+
+    .clear-history-secondary {
+      background: #6b7280;
+    }
+
+    @media (max-width: 760px) {
+      .clear-history-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
   </style>
 </head>
 
@@ -958,6 +1020,123 @@
       }
     </script>
     <!-- FINAL_LLM_CARD_PATCH_END -->
+
+
+    <!-- HISTORY_CLEAR_PATCH_START -->
+    <script>
+      function setupHistoryClearControls() {
+        if (document.getElementById("clearHistoryButton")) {
+          return;
+        }
+
+        const panelActions = document.querySelector(".panel-actions");
+        const historyBlock = document.getElementById("history");
+
+        if (!panelActions || !historyBlock) {
+          return;
+        }
+
+        const clearButton = document.createElement("button");
+        clearButton.id = "clearHistoryButton";
+        clearButton.type = "button";
+        clearButton.className = "clear-history-button";
+        clearButton.innerHTML = "&#1054;&#1095;&#1080;&#1089;&#1090;&#1080;&#1090;&#1100; &#1080;&#1089;&#1090;&#1086;&#1088;&#1080;&#1102;";
+
+        panelActions.appendChild(clearButton);
+
+        const panel = document.createElement("div");
+        panel.id = "clearHistoryPanel";
+        panel.className = "clear-history-panel";
+
+        panel.innerHTML = `
+          <div class="clear-history-grid">
+            <label class="clear-history-field">
+              <span>&#1053;&#1072;&#1095;&#1072;&#1083;&#1086; &#1087;&#1077;&#1088;&#1080;&#1086;&#1076;&#1072;</span>
+              <input id="clearStartDate" type="date" />
+            </label>
+
+            <label class="clear-history-field">
+              <span>&#1050;&#1086;&#1085;&#1077;&#1094; &#1087;&#1077;&#1088;&#1080;&#1086;&#1076;&#1072;</span>
+              <input id="clearEndDate" type="date" />
+            </label>
+
+            <button type="button" class="clear-history-danger" id="clearPeriodButton">
+              &#1054;&#1095;&#1080;&#1089;&#1090;&#1080;&#1090;&#1100; &#1087;&#1077;&#1088;&#1080;&#1086;&#1076;
+            </button>
+
+            <button type="button" class="clear-history-secondary" id="clearAllButton">
+              &#1054;&#1095;&#1080;&#1089;&#1090;&#1080;&#1090;&#1100; &#1074;&#1089;&#1105;
+            </button>
+          </div>
+        `;
+
+        historyBlock.parentNode.insertBefore(panel, historyBlock);
+
+        clearButton.addEventListener("click", () => {
+          panel.classList.toggle("open");
+        });
+
+        document.getElementById("clearAllButton").addEventListener("click", () => {
+          clearDashboardHistory("all");
+        });
+
+        document.getElementById("clearPeriodButton").addEventListener("click", () => {
+          clearDashboardHistory("period");
+        });
+      }
+
+      async function clearDashboardHistory(mode) {
+        const payload = { mode };
+
+        if (mode === "period") {
+          payload.start_date = document.getElementById("clearStartDate").value;
+          payload.end_date = document.getElementById("clearEndDate").value;
+
+          if (!payload.start_date && !payload.end_date) {
+            alert("\u041d\u0443\u0436\u043d\u043e \u0443\u043a\u0430\u0437\u0430\u0442\u044c \u0445\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u043d\u0443 \u0434\u0430\u0442\u0443.");
+            return;
+          }
+        }
+
+        const confirmText = mode === "all"
+          ? "\u0422\u043e\u0447\u043d\u043e \u043e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u0432\u0441\u044e \u0438\u0441\u0442\u043e\u0440\u0438\u044e?"
+          : "\u0422\u043e\u0447\u043d\u043e \u043e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u0438\u0441\u0442\u043e\u0440\u0438\u044e \u0437\u0430 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0439 \u043f\u0435\u0440\u0438\u043e\u0434?";
+
+        if (!confirm(confirmText)) {
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/history/clear", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+
+          const result = await response.json();
+
+          if (!response.ok || !result.ok) {
+            alert("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u0438\u0441\u0442\u043e\u0440\u0438\u044e.");
+            return;
+          }
+
+          if (typeof loadHistory === "function") {
+            await loadHistory();
+          } else {
+            window.location.reload();
+          }
+
+          alert("\u0423\u0434\u0430\u043b\u0435\u043d\u043e \u0441\u043e\u0431\u044b\u0442\u0438\u0439: " + result.deleted);
+        } catch (error) {
+          alert("\u041e\u0448\u0438\u0431\u043a\u0430 \u043e\u0447\u0438\u0441\u0442\u043a\u0438 \u0438\u0441\u0442\u043e\u0440\u0438\u0438: " + error);
+        }
+      }
+
+      window.addEventListener("DOMContentLoaded", setupHistoryClearControls);
+    </script>
+    <!-- HISTORY_CLEAR_PATCH_END -->
 
 </body>
 </html>

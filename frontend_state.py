@@ -6,7 +6,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock
 
-from flask import Response, jsonify, send_from_directory
+from flask import Response, jsonify, request, send_from_directory
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -140,6 +140,29 @@ def record_tracker_event(issue_key, issue=None, data=None, score=None, level=Non
     return event
 
 
+
+def _parse_history_date(value):
+    if not value:
+        return None
+
+    return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+
+
+def _event_in_period(event, start_date, end_date):
+    event_date = _parse_history_date(event.get("time"))
+
+    if event_date is None:
+        return False
+
+    if start_date and event_date < start_date:
+        return False
+
+    if end_date and event_date > end_date:
+        return False
+
+    return True
+
+
 def register_frontend(app):
     _load_history_from_file()
 
@@ -150,6 +173,54 @@ def register_frontend(app):
     @app.get("/api/history")
     def api_history():
         return jsonify(list(history))
+
+
+    @app.post("/api/history/clear")
+    def clear_history():
+        payload = request.get_json(silent=True) or {}
+        mode = payload.get("mode", "all")
+
+        if mode == "all":
+            deleted_count = len(history)
+            history.clear()
+
+        elif mode == "period":
+            start_date = _parse_history_date(payload.get("start_date"))
+            end_date = _parse_history_date(payload.get("end_date"))
+
+            if start_date is None and end_date is None:
+                return jsonify({
+                    "ok": False,
+                    "error": "start_date or end_date is required",
+                }), 400
+
+            old_events = list(history)
+            kept_events = []
+            deleted_count = 0
+
+            for event in old_events:
+                if _event_in_period(event, start_date, end_date):
+                    deleted_count += 1
+                else:
+                    kept_events.append(event)
+
+            history.clear()
+            history.extend(kept_events)
+
+        else:
+            return jsonify({
+                "ok": False,
+                "error": "unknown clear mode",
+            }), 400
+
+        _save_history_to_file()
+
+        return jsonify({
+            "ok": True,
+            "deleted": deleted_count,
+            "remaining": len(history),
+        })
+
 
     @app.get("/api/history/export.csv")
     def export_history_csv():
