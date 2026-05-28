@@ -1,3 +1,16 @@
+import os
+import sys
+
+
+if os.name == "nt":
+    os.system("chcp 65001 > nul")
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import json
 import urllib.request
 from frontend_state import register_frontend, record_tracker_event
@@ -29,7 +42,7 @@ def get_tracker_queue_keys():
             if queue.strip()
         ]
 
-        print(f"[queues] loaded from env: {', '.join(queues)}")
+        print(f"[queues] загружено из env: {', '.join(queues)}")
         return queues
 
     headers = {
@@ -61,7 +74,7 @@ def get_tracker_queue_keys():
 
         queues = [queue.upper() for queue in queues]
 
-        print(f"[queues] loaded from tracker: {', '.join(queues)}")
+        print(f"[queues] загружено из трекера: {', '.join(queues)}")
 
         return queues or ["CLIENT"]
 
@@ -80,7 +93,7 @@ client = TrackerClient(
 start_tracker_queue_discovery(
     client=client,
     load_queue_keys=get_tracker_queue_keys,
-    queue_refresh_interval_seconds=60,
+    queue_refresh_interval_seconds=87,
     polling_interval_seconds=30,
 )
 

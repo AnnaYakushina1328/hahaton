@@ -1,20 +1,20 @@
-﻿import threading
+﻿import json
+import os
+import threading
 import time
-import json
+import urllib.request
 
 from frontend_state import record_tracker_event
 from predict import predict_one
 from task_analyzer import analyze_tracker_task
 
 
-LLM_MARKER = "LLM анализ:"
-
 active_polling_threads = {}
 active_polling_lock = threading.Lock()
 
 
 def _safe_get(value, attr_name, default=None):
-    return getattr(value, attr_name, default) if value else default 
+    return getattr(value, attr_name, default) if value else default
 
 
 def _get_display(value, default="unknown"):
@@ -31,7 +31,7 @@ def _get_display(value, default="unknown"):
 def _build_task_dict(issue):
     summary = getattr(issue, "summary", "") or ""
     description = getattr(issue, "description", "") or ""
-    
+
     return {
         "title": summary,
         "description": description,
@@ -60,111 +60,153 @@ def _issue_snapshot(issue):
     }
 
 
+def _normalize_field_value(value):
+    if value is None:
+        return ""
+
+    return str(
+        getattr(value, "display", None)
+        or getattr(value, "key", None)
+        or value
+    ).strip()
+
+
+def _update_issue_fields_if_changed(issue, updates):
+    real_updates = {}
+
+    for field_name, new_value in updates.items():
+        current_value = getattr(issue, field_name, None)
+
+        if _normalize_field_value(current_value) != _normalize_field_value(new_value):
+            real_updates[field_name] = new_value
+
+    if not real_updates:
+        return False
+
+    issue.update(**real_updates)
+    return True
+
+
 def _calculate_risk_and_update_issue(issue):
-    """Рассчитывает риск дедлайна и обновляет поля риск-менеджмента"""
     try:
         task_dict = _build_task_dict(issue)
         result = predict_one(task_dict)
-        
-        # predict_one возвращает словарь, а не кортеж!
+
         if isinstance(result, dict):
             score = result.get("risk_score")
+            level = result.get("risk_level")
             risk_of_deadline = result.get("riskOfDeadlineFailure")
             deadline_recs = result.get("deadlineRecommendations")
-            level = result.get("risk_level")  # "низкий", "средний", "высокий"
         else:
-            score = None
-            level = "unknown"
-            risk_of_deadline = "0.000"
-            deadline_recs = "Ошибка расчета риска"
-        
-        # Преобразуем level в формат для экспорта (low/medium/high)
-        if level in ("низкий", "low", "Low", "LOW"):
+            score, level = result
+            risk_of_deadline = score
+            deadline_recs = ""
+
+        if score is None:
+            return None, "unknown", False
+
+        score = round(float(score), 3)
+
+        level_lower = str(level or "").lower()
+
+        if level_lower in ("низкий", "low"):
             export_level = "low"
             risk_value = "низкий"
-        elif level in ("средний", "medium", "Medium", "MEDIUM"):
+        elif level_lower in ("средний", "medium"):
             export_level = "medium"
             risk_value = "средний"
-        elif level in ("высокий", "high", "High", "HIGH"):
+        elif level_lower in ("высокий", "high"):
             export_level = "high"
             risk_value = "высокий"
         else:
             export_level = "unknown"
-            risk_value = str(level).lower() if level else "unknown"
-        
-        print(f"[polling] risk calculation: score={score}, level={level}, export_level={export_level}, risk_value={risk_value}")
-        
-        # Обновляем кастомные поля для риск-менеджмента в трекере
-        try:
-            updates = {}
-            
-            # Используем risk_of_deadline из результата predict_one
-            if hasattr(issue, 'riskOfDeadlineFailure'):
-                updates["riskOfDeadlineFailure"] = risk_of_deadline
-                print(f"[polling] установка riskOfDeadlineFailure = {risk_of_deadline}")
-            
-            if hasattr(issue, 'failureToMeetDeadlines'):
-                updates["failureToMeetDeadlines"] = risk_value
-                print(f"[polling] установка failureToMeetDeadlines = {risk_value}")
-            
-            if hasattr(issue, 'deadlineRecommendations'):
-                updates["deadlineRecommendations"] = deadline_recs
-                print(f"[polling] установка deadlineRecommendations = {deadline_recs[:50]}...")
-            
-            if updates:
-                issue.update(**updates)
-                print(f"[polling] ✅ обновлены поля риска для {getattr(issue, 'key', 'unknown')}")
-                
-        except Exception as e:
-            print(f"[polling] ❌ не удалось обновить поля риска: {e}")
-        
-        # Возвращаем score и export_level для записи в историю
-        return score, export_level
-        
+            risk_value = "не рассчитан"
+
+        updates = {}
+
+        if hasattr(issue, "riskOfDeadlineFailure"):
+            updates["riskOfDeadlineFailure"] = risk_of_deadline or score
+
+        if hasattr(issue, "failureToMeetDeadlines"):
+            updates["failureToMeetDeadlines"] = risk_value
+
+        if hasattr(issue, "deadlineRecommendations") and deadline_recs:
+            updates["deadlineRecommendations"] = deadline_recs
+
+        was_updated = _update_issue_fields_if_changed(issue, updates)
+
+        if was_updated:
+            print(f"[polling] поля риска обновлены для {getattr(issue, 'key', 'unknown')}")
+        else:
+            print(f"[polling] поля риска не изменились для {getattr(issue, 'key', 'unknown')}")
+
+        return score, export_level, was_updated
+
     except Exception as error:
-        print(f"[polling] ❌ ошибка расчета риска для {getattr(issue, 'key', 'unknown')}: {error}")
-        import traceback
-        traceback.print_exc()
-        return None, "unknown"
+        print(f"[polling] risk calculation failed for {getattr(issue, 'key', 'unknown')}: {error}")
+        return None, "unknown", False
 
 
 def _analyze_description_with_llm(issue):
-    """Анализирует описание задачи через Gemini и возвращает оценку"""
     try:
         summary = getattr(issue, "summary", "") or ""
         description = getattr(issue, "description", "") or ""
 
         result = analyze_tracker_task(summary, description)
-        
-        print(f"[polling] LLM анализ завершен для {getattr(issue, 'key', 'unknown')}")
+
+        print(f"[polling] LLM-анализ завершён для {getattr(issue, 'key', 'unknown')}")
 
         return result
 
     except Exception as error:
-        print(f"[polling] LLM анализ не удался для {getattr(issue, 'key', 'unknown')}: {error}")
+        print(f"[polling] LLM analysis failed for {getattr(issue, 'key', 'unknown')}: {error}")
+
         return {
             "clarity_score": "ошибка",
             "clarity_comment": f"Не удалось выполнить LLM-анализ: {error}",
-            "risk_level": "средний",
+            "risk_level": "желтый",
             "risk_reasons": ["Ошибка LLM-анализа"],
-            "recommendations": ["Проверить GEMINI_API_KEY и доступ к Gemini API"],
-            "description_quality": "Ошибка оценки"
+            "missing_sections": [],
+            "recommendations": ["Проверить API-ключ и доступность LLM"],
+            "quick_fix": "Проверить настройки LLM",
+            "description_quality": "Ошибка оценки",
         }
 
 
 def _update_description_quality_field(issue, llm_analysis):
-    """Обновляет поле analyzingTheTaskDescription"""
     try:
-        description_quality = llm_analysis.get("description_quality", "Оценка не доступна")
-        
-        if hasattr(issue, 'analyzingTheTaskDescription'):
-            issue.update(analyzingTheTaskDescription=description_quality)
-            print(f"[polling] поле analyzingTheTaskDescription обновлено для {getattr(issue, 'key', 'unknown')}: {description_quality}")
-            return True
-    except Exception as e:
-        print(f"[polling] не удалось обновить analyzingTheTaskDescription: {e}")
-    
-    return False
+        description_quality = (
+            llm_analysis.get("description_quality")
+            or llm_analysis.get("clarity_score")
+            or "Оценка не доступна"
+        )
+
+        if not hasattr(issue, "analyzingTheTaskDescription"):
+            return False
+
+        was_updated = _update_issue_fields_if_changed(
+            issue,
+            {
+                "analyzingTheTaskDescription": description_quality,
+            },
+        )
+
+        if was_updated:
+            print(
+                f"[polling] analyzingTheTaskDescription updated for "
+                f"{getattr(issue, 'key', 'unknown')}: {description_quality}"
+            )
+        else:
+            print(
+                f"[polling] analyzingTheTaskDescription unchanged for "
+                f"{getattr(issue, 'key', 'unknown')}"
+            )
+
+        return was_updated
+
+    except Exception as error:
+        print(f"[polling] failed to update analyzingTheTaskDescription: {error}")
+        return False
 
 
 def _list_to_text(items):
@@ -177,83 +219,112 @@ def _list_to_text(items):
     return f"- {items}"
 
 
-def _format_llm_analysis_for_tracker(llm_analysis):
-    """Форматирует полный LLM анализ для добавления в description"""
-    if not llm_analysis:
-        return ""
+def _format_llm_analysis_comment(issue, llm_analysis):
+    issue_key = getattr(issue, "key", "unknown")
 
     clarity_score = llm_analysis.get("clarity_score", "")
     clarity_comment = llm_analysis.get("clarity_comment", "")
+    risk_level = llm_analysis.get("risk_level", "")
     risk_reasons = _list_to_text(llm_analysis.get("risk_reasons", []))
-    recommendations = _list_to_text(llm_analysis.get("recommendations", []))
     missing_sections = _list_to_text(llm_analysis.get("missing_sections", []))
+    recommendations = _list_to_text(llm_analysis.get("recommendations", []))
     quick_fix = llm_analysis.get("quick_fix", "")
     description_quality = llm_analysis.get("description_quality", "")
 
-    return f"""
+    return f"""🤖 LLM-анализ описания задачи {issue_key}
 
----
-LLM анализ:
+Качество описания: {description_quality}
+Понятность задачи: {clarity_score}
+Риск по LLM: {risk_level}
 
-**Качество описания:** {description_quality}
-
-**Понятность задачи:** {clarity_score}
-
-**Комментарий:**
+Комментарий:
 {clarity_comment}
 
-**Чего не хватает в описании:**
+Чего не хватает в описании:
 {missing_sections}
 
-**Причины риска:**
+Причины риска:
 {risk_reasons}
 
-**Рекомендации:**
+Рекомендации:
 {recommendations}
 
-**Что исправить в первую очередь:**
+Что исправить в первую очередь:
 {quick_fix}
 """
 
-def _append_llm_analysis_to_description(issue, llm_analysis):
-    """Добавляет полный LLM анализ в описание задачи"""
+
+def _add_tracker_comment(issue_key, comment_text):
+    token = os.getenv("TOKEN")
+    cloud_org_id = os.getenv("CLOUD_ORG_ID")
+    org_id = os.getenv("ORG_ID")
+
+    if not token:
+        print("[polling] comment was not added: TOKEN is not set")
+        return False
+
+    headers = {
+        "Authorization": f"OAuth {token}",
+        "Content-Type": "application/json",
+    }
+
+    if cloud_org_id:
+        headers["X-Cloud-Org-ID"] = cloud_org_id
+    elif org_id:
+        headers["X-Org-ID"] = org_id
+    else:
+        print("[polling] comment was not added: CLOUD_ORG_ID or ORG_ID is not set")
+        return False
+
+    payload = json.dumps(
+        {
+            "text": comment_text,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    request = urllib.request.Request(
+        f"https://api.tracker.yandex.net/v3/issues/{issue_key}/comments",
+        data=payload,
+        headers=headers,
+        method="POST",
+    )
+
     try:
-        current_description = getattr(issue, "description", "") or ""
+        with urllib.request.urlopen(request, timeout=20) as response:
+            response.read()
 
-        if LLM_MARKER in current_description:
-            return False
-
-        formatted_analysis = _format_llm_analysis_for_tracker(llm_analysis)
-
-        if not formatted_analysis:
-            return False
-
-        issue.update(
-            description=current_description + formatted_analysis
-        )
-
-        print(f"[polling] LLM анализ добавлен в описание для {getattr(issue, 'key', 'unknown')}")
+        print(f"[polling] LLM-комментарий добавлен к {issue_key}")
         return True
 
     except Exception as error:
-        print(f"[polling] не удалось обновить описание: {error}")
+        print(f"[polling] не удалось добавить LLM-комментарий к {issue_key}: {error}")
         return False
 
 
-def _record_tracker_change(issue_key, issue, event_code, queue_key):
-    # 1. Рассчитываем риск дедлайна (score и level для истории)
-    score, level = _calculate_risk_and_update_issue(issue)
-    
-    # 2. Анализируем описание через Gemini
-    llm_analysis = _analyze_description_with_llm(issue)
-    
-    # 3. Обновляем поле analyzingTheTaskDescription оценкой качества описания
-    _update_description_quality_field(issue, llm_analysis)
-    
-    # 4. Добавляем полный LLM анализ в описание
-    _append_llm_analysis_to_description(issue, llm_analysis)
+def _add_llm_comment_to_issue(issue, llm_analysis):
+    issue_key = getattr(issue, "key", None)
 
-    # 5. Записываем событие в историю
+    if not issue_key:
+        return False
+
+    comment_text = _format_llm_analysis_comment(issue, llm_analysis)
+
+    if not comment_text.strip():
+        return False
+
+    return _add_tracker_comment(issue_key, comment_text)
+
+
+def _record_tracker_change(issue_key, issue, event_code, queue_key):
+    score, level, risk_fields_updated = _calculate_risk_and_update_issue(issue)
+
+    llm_analysis = _analyze_description_with_llm(issue)
+
+    quality_field_updated = _update_description_quality_field(issue, llm_analysis)
+
+    comment_added = _add_llm_comment_to_issue(issue, llm_analysis)
+
     event = record_tracker_event(
         issue_key=issue_key,
         issue=issue,
@@ -262,15 +333,17 @@ def _record_tracker_change(issue_key, issue, event_code, queue_key):
             "queue": queue_key,
             "llm_analysis": llm_analysis,
         },
-        score=score,      # числовой скоp (0.595)
-        level=level,      # текстовый уровень: "low", "medium", "high"
+        score=score,
+        level=level,
     )
 
-    return event, False
+    issue_was_updated_by_us = risk_fields_updated or quality_field_updated or comment_added
+
+    return event, issue_was_updated_by_us
 
 
 def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=30, per_page=50):
-    print(f"[polling] запущен для очереди {queue_key}, интервал {interval_seconds}с", flush=True)
+    print(f"[polling] запущена проверка очереди {queue_key}, интервал {interval_seconds} сек.", flush=True)
 
     previous = {}
     first_run = True
@@ -278,8 +351,8 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=30, per_pag
 
     while True:
         try:
-            print(f"[polling] проверка очереди {queue_key}...", flush=True)
-            
+            print(f"[polling] активные очереди {queue_key}...", flush=True)
+
             issues = list(
                 client.issues.find(
                     filter={"queue": queue_key},
@@ -287,7 +360,7 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=30, per_pag
                     per_page=per_page,
                 )
             )
-            
+
             print(f"[polling] найдено {len(issues)} задач в очереди {queue_key}", flush=True)
 
             current = {}
@@ -307,28 +380,31 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=30, per_pag
                 old_snapshot = previous.get(issue_key)
 
                 if old_snapshot is None:
-                    _, _ = _record_tracker_change(
+                    _, issue_was_updated_by_us = _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
                         event_code="new_task",
                         queue_key=queue_key,
                     )
 
-                    if issue_key in self_updated_issues:
-                        self_updated_issues.remove(issue_key)
+                    if issue_was_updated_by_us:
+                        self_updated_issues.add(issue_key)
 
                     print(f"[polling] новая задача в {queue_key}: {issue_key}")
                     continue
 
                 if old_snapshot.get("status") != snapshot.get("status"):
-                    _, _ = _record_tracker_change(
+                    _, issue_was_updated_by_us = _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
                         event_code="status_changed",
                         queue_key=queue_key,
                     )
 
-                    print(f"[polling] статус изменен в {queue_key}: {issue_key}")
+                    if issue_was_updated_by_us:
+                        self_updated_issues.add(issue_key)
+
+                    print(f"[polling] сек?новая задача в {queue_key}: {issue_key}")
                     continue
 
                 if old_snapshot.get("updated_at") != snapshot.get("updated_at"):
@@ -337,12 +413,15 @@ def _poll_tracker_queue(client, queue_key="CLIENT", interval_seconds=30, per_pag
                         print(f"[polling] пропущено собственное обновление в {queue_key}: {issue_key}")
                         continue
 
-                    _, _ = _record_tracker_change(
+                    _, issue_was_updated_by_us = _record_tracker_change(
                         issue_key=issue_key,
                         issue=issue,
                         event_code="task_updated",
                         queue_key=queue_key,
                     )
+
+                    if issue_was_updated_by_us:
+                        self_updated_issues.add(issue_key)
 
                     print(f"[polling] задача обновлена в {queue_key}: {issue_key}")
 
@@ -419,7 +498,7 @@ def start_tracker_polling(client, queue_keys=None, interval_seconds=30):
 def _queue_discovery_loop(
     client,
     load_queue_keys,
-    queue_refresh_interval_seconds=60,
+    queue_refresh_interval_seconds=87,
     polling_interval_seconds=30,
 ):
     while True:
@@ -435,7 +514,7 @@ def _queue_discovery_loop(
             )
 
         except Exception as error:
-            print(f"[queues] ошибка обновления: {error}")
+            print(f"[queues] ошибка обновления очередей: {error}")
 
         time.sleep(queue_refresh_interval_seconds)
 
@@ -443,7 +522,7 @@ def _queue_discovery_loop(
 def start_tracker_queue_discovery(
     client,
     load_queue_keys,
-    queue_refresh_interval_seconds=60,
+    queue_refresh_interval_seconds=87,
     polling_interval_seconds=30,
 ):
     initial_queue_keys = load_queue_keys()
@@ -467,6 +546,6 @@ def start_tracker_queue_discovery(
 
     discovery_thread.start()
 
-    print(f"[queues] автообнаружение запущено, интервал {queue_refresh_interval_seconds}с")
+    print(f"[queues] автообновление очередей запущено, интервал {queue_refresh_interval_seconds} сек.")
 
     return discovery_thread
