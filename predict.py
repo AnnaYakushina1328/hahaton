@@ -30,13 +30,29 @@ def prepare_prediction_data(task_dict):
     df["start_weekday"] = df["start_date_dt"].dt.weekday.fillna(0).astype(int)
     df["planned_end_weekday"] = df["planned_end_date_dt"].dt.weekday.fillna(0).astype(int)
     
-    # Длины текстов
-    df["title_len"] = df["title"].fillna("").str.len()
-    df["description_len"] = df["description"].fillna("").str.len()
-    df["acceptance_len"] = df["acceptance_criteria"].fillna("").str.len()
+    # Длины текстов - с проверкой наличия полей
+    df["title_len"] = df["title"].fillna("").str.len() if "title" in df.columns else 0
+    df["description_len"] = df["description"].fillna("").str.len() if "description" in df.columns else 0
     
-    # Объединяем все тексты
-    df["text_all"] = df[["title", "description", "acceptance_criteria"]].fillna("").agg(" ".join, axis=1)
+    # acceptance_criteria может не быть в словаре
+    if "acceptance_criteria" in df.columns:
+        df["acceptance_len"] = df["acceptance_criteria"].fillna("").str.len()
+    else:
+        df["acceptance_len"] = 0
+    
+    # Объединяем все тексты (только те поля, которые есть)
+    text_parts = []
+    if "title" in df.columns:
+        text_parts.append(df["title"].fillna(""))
+    if "description" in df.columns:
+        text_parts.append(df["description"].fillna(""))
+    if "acceptance_criteria" in df.columns:
+        text_parts.append(df["acceptance_criteria"].fillna(""))
+    
+    if text_parts:
+        df["text_all"] = pd.concat(text_parts, axis=1).fillna("").agg(" ".join, axis=1)
+    else:
+        df["text_all"] = ""
     
     # Признаки
     features = [
@@ -106,6 +122,10 @@ def predict_one(task_dict):
         }
     """
     try:
+        # Добавляем acceptance_criteria, если его нет
+        if "acceptance_criteria" not in task_dict:
+            task_dict["acceptance_criteria"] = ""
+        
         model = load_model()
         if model is None:
             raise Exception("Модель не загружена")
@@ -131,5 +151,5 @@ def predict_one(task_dict):
             "risk_score": 0.5,
             "risk_level": "средний",
             "riskOfDeadlineFailure": "0.500",
-            "deadlineRecommendations": "⚠️ Ошибка модели рисков. Проверьте наличие файла deadline_risk_model.joblib"
+            "deadlineRecommendations": f"⚠️ Ошибка: {str(e)}"
         }
