@@ -126,14 +126,12 @@ def get_risk_level(score):
 def get_recommendation_replacement(current_assignee, task_type, replacement_model):
     """Рекомендует замену исполнителя"""
     try:
-        # Сначала ищем по типу задачи
         if task_type in replacement_model.get("by_task_type", {}):
             candidates = replacement_model["by_task_type"][task_type]
             for candidate in candidates:
                 if candidate != current_assignee:
                     return candidate
         
-        # Если нет, берем топовых в целом
         for candidate in replacement_model.get("top_overall", []):
             if candidate != current_assignee:
                 return candidate
@@ -170,21 +168,6 @@ def get_alternative_assignees(current_assignee, task_type, replacement_model, li
 
 
 def predict_one(task_dict):
-    """
-    Расширенная функция предсказания
-    
-    Returns:
-        dict: {
-            "risk_score": float,
-            "risk_level": str,
-            "riskOfDeadlineFailure": str,
-            "predicted_delay_days": float,
-            "recommended_extension_days": int,
-            "recommended_replacement": str or None,
-            "alternative_assignees": list,
-            "deadlineRecommendations": str
-        }
-    """
     # Добавляем отсутствующие поля
     defaults = {
         "acceptance_criteria": "",
@@ -220,7 +203,7 @@ def predict_one(task_dict):
     
     risk_level = get_risk_level(risk_score)
     
-    # 2. Предсказание просрочки
+    # 2. Предсказание просрочки (deadlineFailure)
     predicted_delay = 0.0
     if models["delay"]:
         try:
@@ -229,10 +212,10 @@ def predict_one(task_dict):
         except Exception as e:
             print(f"Ошибка предсказания просрочки: {e}")
     
-    # 3. Рекомендация по увеличению дедлайна
+    # 3. Рекомендация по увеличению дедлайна (necessaryProlongation)
     recommended_extension = int(predicted_delay + 2) if predicted_delay > 0 else 0
     
-    # 4. Рекомендация по замене исполнителя
+    # 4. Рекомендация по замене исполнителя (replaceThePerformerWith)
     recommended_replacement = None
     if models["replacement"] and risk_level == "высокий":
         recommended_replacement = get_recommendation_replacement(
@@ -260,15 +243,6 @@ def predict_one(task_dict):
     else:
         recommendations.append("🟢 НИЗКИЙ РИСК срыва дедлайна. Задача реализуема в срок.")
     
-    if predicted_delay > 0:
-        recommendations.append(f"📊 Прогноз: задача может задержаться на {predicted_delay:.1f} дней")
-        if recommended_extension > 0:
-            recommendations.append(f"📅 Рекомендуется увеличить дедлайн на {recommended_extension} дней")
-    
-    if recommended_replacement:
-        recommendations.append(f"👥 Рассмотрите замену исполнителя на {recommended_replacement}")
-    
-    # Проверка на блокирующие задачи
     if task_dict.get("blocked_by"):
         blockers_count = len(task_dict["blocked_by"])
         recommendations.append(f"🚫 Задача заблокирована {blockers_count} задачами. Сначала решите их.")
@@ -280,9 +254,12 @@ def predict_one(task_dict):
         "risk_score": round(risk_score, 3),
         "risk_level": risk_level,
         "riskOfDeadlineFailure": f"{risk_score:.3f}",
+        "deadlineRecommendations": "\n".join(recommendations),
+        "deadlineFailure": f"{predicted_delay:.1f}",           
+        "necessaryProlongation": recommended_extension,       
+        "replaceThePerformerWith": recommended_replacement,   
         "predicted_delay_days": round(predicted_delay, 1),
         "recommended_extension_days": recommended_extension,
         "recommended_replacement": recommended_replacement,
         "alternative_assignees": alternative_assignees,
-        "deadlineRecommendations": "\n".join(recommendations)
     }

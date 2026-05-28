@@ -97,10 +97,16 @@ def _calculate_risk_and_update_issue(issue):
             level = result.get("risk_level")
             risk_of_deadline = result.get("riskOfDeadlineFailure")
             deadline_recs = result.get("deadlineRecommendations")
+            predicted_delay_days = result.get("predicted_delay_days", 0)
+            recommended_extension_days = result.get("recommended_extension_days", 0)
+            recommended_replacement = result.get("recommended_replacement")
         else:
             score, level = result
             risk_of_deadline = score
             deadline_recs = ""
+            predicted_delay_days = 0
+            recommended_extension_days = 0
+            recommended_replacement = None
 
         if score is None:
             return None, "unknown", False
@@ -133,19 +139,22 @@ def _calculate_risk_and_update_issue(issue):
         if hasattr(issue, "deadlineRecommendations") and deadline_recs:
             updates["deadlineRecommendations"] = deadline_recs
 
-        was_updated = _update_issue_fields_if_changed(issue, updates)
+        if hasattr(issue, "deadlineFailure"):
+            updates["deadlineFailure"] = predicted_delay_days
 
-        if was_updated:
-            print(f"[polling] поля риска обновлены для {getattr(issue, 'key', 'unknown')}")
-        else:
-            print(f"[polling] поля риска не изменились для {getattr(issue, 'key', 'unknown')}")
+        if hasattr(issue, "necessaryProlongation"):
+            updates["necessaryProlongation"] = recommended_extension_days
+
+        if hasattr(issue, "replaceThePerformerWith") and recommended_replacement:
+            updates["replaceThePerformerWith"] = recommended_replacement
+
+        was_updated = _update_issue_fields_if_changed(issue, updates)
 
         return score, export_level, was_updated
 
     except Exception as error:
         print(f"[polling] risk calculation failed for {getattr(issue, 'key', 'unknown')}: {error}")
         return None, "unknown", False
-
 
 def _analyze_description_with_llm(issue):
     try:
