@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -10,16 +11,20 @@ load_dotenv()
 
 
 MODELS_TO_TRY = [
-    "openrouter/free",
     "google/gemini-2.5-flash-lite",
     "google/gemini-2.5-flash",
+    "openrouter/free",
 ]
+
+REQUEST_TIMEOUT_SECONDS = 12
+MAX_OUTPUT_TOKENS = 650
+RETRY_DELAY_SECONDS = 4
 
 
 SYSTEM_PROMPT = """
 Ты — AI-ассистент риск-менеджмента для Яндекс.Трекера.
 
-Твоя задача — оценить качество описания задачи и риски для команды разработки.
+Твоя задача — быстро оценить качество описания задачи и риски для команды разработки.
 
 Верни ответ строго в JSON-формате:
 {
@@ -34,12 +39,14 @@ SYSTEM_PROMPT = """
 }
 
 Правила:
-1. Если описание короткое, общее или непонятное — ставь "Плохое описание".
-2. Если нет критериев готовности, ожидаемого результата или конкретики — риск минимум "средний".
-3. Если задача может привести к переделкам из-за неясности — риск "высокий".
-4. Не используй markdown.
-5. Не оборачивай ответ в ```json.
-6. Верни только JSON.
+1. Отвечай кратко.
+2. В списках максимум 3 пункта.
+3. Если описание короткое, общее или непонятное — ставь "Плохое описание".
+4. Если нет критериев готовности, ожидаемого результата или конкретики — риск минимум "средний".
+5. Если задача может привести к переделкам из-за неясности — риск "высокий".
+6. Не используй markdown.
+7. Не оборачивай ответ в ```json.
+8. Верни только JSON.
 """
 
 
@@ -52,12 +59,15 @@ def _get_openrouter_client():
     return OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
-        timeout=40,
+        timeout=REQUEST_TIMEOUT_SECONDS,
     )
 
 
 def _extract_json(raw_content):
     content = (raw_content or "").strip()
+
+    if not content:
+        raise json.JSONDecodeError("Пустой ответ модели", content, 0)
 
     if content.startswith("```json"):
         content = content.replace("```json", "", 1).strip()
@@ -75,91 +85,10 @@ def _extract_json(raw_content):
 
     match = re.search(r"\{[\s\S]*\}", content)
 
-    if match:
-        json_text = match.group(0)
+    if not match:
+        raise json.JSONDecodeError("JSON object not found", content, 0)
 
-        try:
-            return json.loads(json_text)
-        except json.JSONDecodeError:
-            repaired = _repair_common_json_errors(json_text)
-            return json.loads(repaired)
-
-    raise json.JSONDecodeError("JSON object not found", content, 0)
-
-
-def _repair_common_json_errors(json_text):
-    repaired = json_text
-
-    repaired = repaired.replace("\n", "\\n")
-    repaired = repaired.replace("\r", "\\r")
-    repaired = repaired.replace("\t", "\\t")
-
-    return repaired
-
-
-def _fallback_analysis(summary, description, error_text=None):
-    description = description or ""
-
-    desc_len = len(description.strip())
-
-    has_acceptance_words = any(
-        word in description.lower()
-        for word in [
-            "критер",
-            "готов",
-            "результат",
-            "должно",
-            "провер",
-            "сценар",
-            "ожида",
-            "приемк",
-            "приёмк",
-        ]
-    )
-
-    if desc_len < 60:
-        clarity_score = "низкая"
-        risk_level = "высокий"
-        description_quality = "Плохое описание"
-    elif desc_len >= 120 and has_acceptance_words:
-        clarity_score = "высокая"
-        risk_level = "низкий"
-        description_quality = "Хорошее описание"
-    else:
-        clarity_score = "средняя"
-        risk_level = "средний"
-        description_quality = "Среднее описание"
-
-    clarity_comment = (
-        "Описание оценено локальной эвристикой, потому что LLM временно недоступна "
-        "или вернула некорректный JSON. Проверьте полноту описания, ожидаемый результат "
-        "и критерии готовности."
-    )
-
-    if error_text:
-        clarity_comment += f" Последняя ошибка LLM: {str(error_text)[:200]}"
-
-    return {
-        "clarity_score": clarity_score,
-        "clarity_comment": clarity_comment,
-        "risk_level": risk_level,
-        "risk_reasons": [
-            "LLM временно не вернула корректный ответ",
-            "Описание может быть неполным или недостаточно конкретным",
-        ],
-        "missing_sections": [
-            "Ожидаемый результат",
-            "Критерии готовности",
-            "Проверочные сценарии",
-        ],
-        "recommendations": [
-            "Добавить ожидаемый результат выполнения задачи",
-            "Описать критерии приемки",
-            "Указать, как именно проверить корректность выполнения",
-        ],
-        "quick_fix": "Добавить критерии готовности и ожидаемый результат.",
-        "description_quality": description_quality,
-    }
+    return json.loads(match.group(0))
 
 
 def _normalize_result(result):
@@ -174,6 +103,9 @@ def _normalize_result(result):
         "description_quality": "Среднее описание",
     }
 
+    if not isinstance(result, dict):
+        raise ValueError("Модель вернула не JSON-объект")
+
     for key, default_value in required_defaults.items():
         if key not in result or result[key] is None:
             result[key] = default_value
@@ -185,7 +117,55 @@ def _normalize_result(result):
         if not isinstance(result[key], list):
             result[key] = []
 
+        result[key] = result[key][:3]
+
     return result
+
+
+def _get_retry_delay(error):
+    error_text = str(error)
+
+    match = re.search(r"retry_after_seconds['\"]?:\s*([0-9]+)", error_text)
+
+    if match:
+        return min(int(match.group(1)), 30)
+
+    match = re.search(r"Retry-After['\"]?:\s*['\"]?([0-9]+)", error_text)
+
+    if match:
+        return min(int(match.group(1)), 30)
+
+    return RETRY_DELAY_SECONDS
+
+
+def _call_model(client, model, user_content):
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": user_content,
+            },
+        ],
+        temperature=0.1,
+        max_tokens=MAX_OUTPUT_TOKENS,
+        response_format={
+            "type": "json_object",
+        },
+        extra_headers={
+            "HTTP-Referer": "http://localhost:8080",
+            "X-Title": "Tracker Risk Analyzer",
+        },
+    )
+
+    raw_content = response.choices[0].message.content
+    result = _extract_json(raw_content)
+
+    return _normalize_result(result)
 
 
 def analyze_tracker_task(summary: str, description: str) -> dict:
@@ -204,51 +184,54 @@ def analyze_tracker_task(summary: str, description: str) -> dict:
 """
 
     client = _get_openrouter_client()
-    last_error = None
+    attempt_round = 1
 
-    for model in MODELS_TO_TRY:
-        try:
-            print(f"[LLM] Пробуем модель: {model}", flush=True)
+    while True:
+        print(f"[LLM] Круг попыток №{attempt_round}", flush=True)
 
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": SYSTEM_PROMPT,
-                    },
-                    {
-                        "role": "user",
-                        "content": user_content,
-                    },
-                ],
-                temperature=0.1,
-                max_tokens=1200,
-                response_format={
-                    "type": "json_object",
-                },
-                extra_headers={
-                    "HTTP-Referer": "http://localhost:8080",
-                    "X-Title": "Tracker Risk Analyzer",
-                },
-            )
+        for model in MODELS_TO_TRY:
+            try:
+                print(f"[LLM] Пробуем модель: {model}", flush=True)
 
-            raw_content = response.choices[0].message.content
-            result = _extract_json(raw_content)
-            result = _normalize_result(result)
+                result = _call_model(
+                    client=client,
+                    model=model,
+                    user_content=user_content,
+                )
 
-            print(f"[LLM] Успешно с моделью: {model}", flush=True)
+                print(f"[LLM] Успешно с моделью: {model}", flush=True)
 
-            return result
+                return result
 
-        except Exception as error:
-            last_error = error
-            print(f"[LLM] Модель {model} не сработала: {error}", flush=True)
+            except json.JSONDecodeError as error:
+                print(
+                    f"[LLM] Модель {model} вернула некорректный JSON: {error}",
+                    flush=True,
+                )
+                continue
 
-    print("[LLM] Все модели недоступны, используется локальная эвристика", flush=True)
+            except Exception as error:
+                delay = _get_retry_delay(error)
 
-    return _fallback_analysis(
-        summary=summary,
-        description=description,
-        error_text=str(last_error) if last_error else None,
-    )
+                print(
+                    f"[LLM] Модель {model} не сработала: {error}",
+                    flush=True,
+                )
+
+                if "429" in str(error):
+                    print(
+                        f"[LLM] Пойман лимит. Ждём {delay} сек. перед следующей попыткой.",
+                        flush=True,
+                    )
+                    time.sleep(delay)
+
+                continue
+
+        print(
+            f"[LLM] Все модели в круге №{attempt_round} не дали валидный результат. "
+            f"Ждём {RETRY_DELAY_SECONDS} сек. и пробуем снова.",
+            flush=True,
+        )
+
+        attempt_round += 1
+        time.sleep(RETRY_DELAY_SECONDS)
