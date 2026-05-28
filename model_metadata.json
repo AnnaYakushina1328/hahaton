@@ -1,64 +1,17 @@
 {
-  "target": "deadline_failed = 1 если deviation_days > 0, иначе 0",
-  "rows": 80,
-  "positive_class_count": 39,
-  "negative_class_count": 41,
-  "features": [
-    "assignee",
-    "implementation_days",
-    "planned_duration_days",
-    "start_weekday",
-    "planned_end_weekday",
-    "task_type",
-    "title_len",
-    "description_len",
-    "acceptance_len",
-    "text_all"
-  ],
-  "excluded_leakage_columns": [
-    "actual_close_date",
-    "deviation_days",
-    "completion_status"
-  ],
-  "holdout_metrics": {
-    "accuracy": 0.7,
-    "precision": 0.75,
-    "recall": 0.6,
-    "f1": 0.6666666666666666,
-    "roc_auc": 0.76,
-    "confusion_matrix": [
-      [
-        8,
-        2
-      ],
-      [
-        4,
-        6
-      ]
-    ]
+  "training_date": "2026-05-28 15:16:17",
+  "samples_count": 200,
+  "features_count": 11,
+  "risk_cv_scores": {
+    "accuracy": 0.6699999999999999,
+    "roc_auc": 0.7459285954170864
   },
-  "cross_validation_5fold": {
-    "accuracy": {
-      "mean": 0.675,
-      "std": 0.1334634781503914
-    },
-    "precision": {
-      "mean": 0.6785714285714286,
-      "std": 0.12777531299998798
-    },
-    "recall": {
-      "mean": 0.6464285714285715,
-      "std": 0.14033487645991785
-    },
-    "f1": {
-      "mean": 0.6614285714285714,
-      "std": 0.1331495331795836
-    },
-    "roc_auc": {
-      "mean": 0.734077380952381,
-      "std": 0.09978297204819556
-    }
-  },
+  "delay_mae": 1.3850200388770275,
+  "top_assignees": [
+    "Анна Якушина",
+    "Кристина Барулева",
+    "Алина Суляева"
+  ],
   "risk_levels": {
     "low": "< 0.35",
     "medium": "0.35-0.70",

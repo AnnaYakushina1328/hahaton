@@ -1,52 +1,69 @@
 import pandas as pd
 import joblib
+import numpy as np
 from pathlib import Path
+from datetime import datetime
+import json
 
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, 
+    roc_auc_score, confusion_matrix, mean_absolute_error
+)
 
 DATA_PATH = "zadachki_dataset(1).csv"
-MODEL_PATH = "deadline_risk_model.joblib"
+RISK_MODEL_PATH = "deadline_risk_model.joblib"
+DELAY_MODEL_PATH = "delay_prediction_model.joblib"
+REPLACEMENT_MODEL_PATH = "replacement_model.joblib"
+METADATA_PATH = "model_metadata.json"
 
 
 def prepare_dataset(path):
     """Подготовка данных из CSV"""
     df = pd.read_csv(path)
-
-    # Целевая переменная - срыв дедлайна
-    # deviation_days > 0 значит задача просрочена
-    df["deadline_failed"] = (df["deviation_days"] > 0).astype(int)
-
+    
+    print(f"📊 Исходные данные: {len(df)} строк")
+    
+    # Целевые переменные
+    df["deadline_failed"] = (df["deviation_days"] > 0).astype(int)  # Бинарный риск
+    df["delay_days"] = df["deviation_days"].clip(0, 30)  # Прогноз просрочки (дней)
+    
     # Конвертация дат
     df["start_date_dt"] = pd.to_datetime(df["start_date"], dayfirst=True, errors="coerce")
     df["planned_end_date_dt"] = pd.to_datetime(df["planned_end_date"], dayfirst=True, errors="coerce")
-
+    
     # Вычисляем длительность
     df["planned_duration_days"] = (df["planned_end_date_dt"] - df["start_date_dt"]).dt.days
-    df["planned_duration_days"] = df["planned_duration_days"].fillna(0)
-
+    df["planned_duration_days"] = df["planned_duration_days"].fillna(df["implementation_days"])
+    
     # День недели
     df["start_weekday"] = df["start_date_dt"].dt.weekday.fillna(0).astype(int)
     df["planned_end_weekday"] = df["planned_end_date_dt"].dt.weekday.fillna(0).astype(int)
-
+    
     # Длины текстов
     df["title_len"] = df["title"].fillna("").str.len()
     df["description_len"] = df["description"].fillna("").str.len()
     df["acceptance_len"] = df["acceptance_criteria"].fillna("").str.len()
-
+    
     # Объединяем все тексты
     df["text_all"] = df[["title", "description", "acceptance_criteria"]].fillna("").agg(" ".join, axis=1)
-
+    
+    # Оценка сложности
+    df["complexity_score"] = df.apply(estimate_complexity, axis=1)
+    
+    # Признаки
     features = [
         "assignee",
         "implementation_days",
         "planned_duration_days",
+        "complexity_score",
         "start_weekday",
         "planned_end_weekday",
         "task_type",
@@ -55,160 +72,217 @@ def prepare_dataset(path):
         "acceptance_len",
         "text_all",
     ]
+    
+    print(f"   Просроченных задач: {df['deadline_failed'].sum()} ({(df['deadline_failed'].sum()/len(df)*100):.1f}%)")
+    print(f"   Средняя просрочка: {df['delay_days'].mean():.1f} дней")
+    
+    return df[features], df["deadline_failed"], df["delay_days"], df
 
-    return df[features], df["deadline_failed"]
+
+def estimate_complexity(row):
+    """Оценка сложности задачи от 1 до 5"""
+    score = 1
+    
+    # По длительности
+    days = row.get("planned_duration_days", 0)
+    if days > 5:
+        score += 1
+    if days > 10:
+        score += 1
+    
+    # По типу задачи
+    complex_types = ["Backend", "DevOps", "Аналитика", "Интеграция"]
+    if row.get("task_type") in complex_types:
+        score += 1
+    
+    # По объему описания
+    desc_len = len(str(row.get("description", "")))
+    if desc_len > 500:
+        score += 1
+    elif desc_len > 200:
+        score += 0.5
+    
+    # По наличию критериев приемки
+    if len(str(row.get("acceptance_criteria", ""))) > 100:
+        score += 0.5
+    
+    return min(score, 5)
 
 
-def build_model():
-    """Строит pipeline модели"""
+def build_risk_model():
+    """Строит модель для предсказания риска срыва дедлайна"""
     numeric_features = [
         "implementation_days",
         "planned_duration_days",
+        "complexity_score",
         "start_weekday",
         "planned_end_weekday",
         "title_len",
         "description_len",
         "acceptance_len",
     ]
-
-    cat_features = [
-        "assignee",
-        "task_type",
-    ]
-
+    
+    cat_features = ["assignee", "task_type"]
+    
     preprocessor = ColumnTransformer([
         ("num", Pipeline([
             ("imputer", SimpleImputer(strategy="median")),
             ("scaler", StandardScaler()),
         ]), numeric_features),
-        ("cat", OneHotEncoder(handle_unknown="ignore"), cat_features),
+        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), cat_features),
         ("text", TfidfVectorizer(max_features=200, ngram_range=(1, 2)), "text_all"),
     ])
-
+    
     return Pipeline([
         ("preprocess", preprocessor),
-        ("model", LogisticRegression(max_iter=2000, class_weight="balanced", random_state=42, C=0.1)),
+        ("model", RandomForestClassifier(
+            n_estimators=100,
+            max_depth=10,
+            min_samples_split=5,
+            class_weight="balanced",
+            random_state=42,
+            n_jobs=-1
+        )),
     ])
 
 
-def analyze_feature_importance(model, feature_names):
-    """Анализирует важность признаков"""
-    try:
-        # Получаем коэффициенты модели
-        coefficients = model.named_steps["model"].coef_[0]
-        
-        # Для текстовых признаков
-        text_vectorizer = model.named_steps["preprocess"].named_transformers_["text"]
-        text_features = text_vectorizer.get_feature_names_out()
-        
-        # Важность признаков
-        importance = []
-        
-        # Собираем все признаки
-        for name, coef in zip(feature_names, coefficients):
-            importance.append((abs(coef), name, coef))
-        
-        importance.sort(reverse=True)
-        
-        print("\n📊 Топ-10 важных признаков (по модулю коэффициента):")
-        for i, (abs_coef, name, coef) in enumerate(importance[:10]):
-            direction = "⬆️ (увеличивает риск)" if coef > 0 else "⬇️ (уменьшает риск)"
-            print(f"  {i+1}. {name}: {coef:.3f} {direction}")
-            
-    except Exception as e:
-        print(f"⚠️ Не удалось проанализировать важность признаков: {e}")
-
-
-def predict_risk_with_interpretation(task_dict, model):
-    """Предсказывает риск с интерпретацией"""
-    X = pd.DataFrame([task_dict])
+def build_delay_model():
+    """Строит модель для прогноза просрочки в днях"""
+    numeric_features = [
+        "implementation_days",
+        "planned_duration_days",
+        "complexity_score",
+        "start_weekday",
+        "planned_end_weekday",
+        "title_len",
+        "description_len",
+        "acceptance_len",
+    ]
     
-    # Вероятность риска
-    proba = model.predict_proba(X)[0, 1]
+    cat_features = ["assignee", "task_type"]
     
-    # Интерпретация
-    if proba >= 0.7:
-        risk_level = "высокий"
-        explanation = "Задача имеет высокий риск срыва дедлайна"
-    elif proba >= 0.4:
-        risk_level = "средний"
-        explanation = "Задача имеет средний риск срыва дедлайна"
-    else:
-        risk_level = "низкий"
-        explanation = "Задача имеет низкий риск срыва дедлайна"
+    preprocessor = ColumnTransformer([
+        ("num", Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]), numeric_features),
+        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), cat_features),
+        ("text", TfidfVectorizer(max_features=200, ngram_range=(1, 2)), "text_all"),
+    ])
     
-    return proba, risk_level, explanation
+    return Pipeline([
+        ("preprocess", preprocessor),
+        ("model", RandomForestRegressor(
+            n_estimators=100,
+            max_depth=10,
+            random_state=42,
+            n_jobs=-1
+        )),
+    ])
 
 
-def main():
-    print("📊 Загрузка данных...")
-    X, y = prepare_dataset(DATA_PATH)
+def build_replacement_recommender(df):
+    """Строит рекомендательную систему для замены исполнителя"""
+    # Анализируем успешность каждого исполнителя
+    performance = df.groupby("assignee").agg({
+        "deadline_failed": lambda x: 1 - x.mean(),  # успешность (1 - процент просрочек)
+        "delay_days": "mean",
+        "task_id": "count"
+    }).rename(columns={
+        "deadline_failed": "success_rate",
+        "delay_days": "avg_delay",
+        "task_id": "tasks_count"
+    })
     
-    print(f"✅ Данные загружены: {len(X)} строк")
-    print(f"   Просроченные задачи (срыв дедлайна): {sum(y)} ({sum(y)/len(y)*100:.1f}%)")
-    print(f"   Выполненные в срок: {len(y) - sum(y)} ({(len(y)-sum(y))/len(y)*100:.1f}%)")
+    # Для каждого типа задачи - свои топ-исполнители
+    type_performance = df.groupby(["task_type", "assignee"]).agg({
+        "deadline_failed": lambda x: 1 - x.mean(),
+        "delay_days": "mean"
+    }).rename(columns={"deadline_failed": "success_rate", "delay_days": "avg_delay"})
+    
+    return {
+        "overall": performance.to_dict("index"),
+        "by_task_type": type_performance.groupby("task_type").apply(
+            lambda x: x.nlargest(3, "success_rate").index.get_level_values(1).tolist()
+        ).to_dict(),
+        "top_overall": performance.nlargest(3, "success_rate").index.tolist()
+    }
 
-    model = build_model()
 
+def train_models():
+    """Основная функция обучения всех моделей"""
+    print("=" * 60)
+    print("🚀 ОБУЧЕНИЕ РАСШИРЕННОЙ МОДЕЛИ РИСКОВ")
+    print("=" * 60)
+    
+    # Загрузка данных
+    print("\n📂 Загрузка данных...")
+    X, y_risk, y_delay, df = prepare_dataset(DATA_PATH)
+    
+    # 1. Обучение модели риска
+    print("\n🔴 1. Обучение модели риска срыва дедлайна...")
+    risk_model = build_risk_model()
+    
     # Cross-validation
-    print("\n🔄 5-fold Cross-Validation...")
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     scores = cross_validate(
-        model,
-        X,
-        y,
-        cv=cv,
-        scoring=["accuracy", "precision", "recall", "f1", "roc_auc"],
+        risk_model, X, y_risk, cv=cv,
+        scoring=["accuracy", "precision", "recall", "f1", "roc_auc"]
     )
-
-    print("Результаты 5-fold CV:")
-    for metric, values in scores.items():
-        if metric.startswith("test_"):
-            print(f"  {metric.replace('test_', '')}: {values.mean():.3f} +/- {values.std():.3f}")
-
-    # Holdout
-    print("\n📊 Holdout validation...")
+    
+    print("   CV результаты:")
+    for metric in ["accuracy", "precision", "recall", "f1", "roc_auc"]:
+        print(f"     {metric}: {scores[f'test_{metric}'].mean():.3f} +/- {scores[f'test_{metric}'].std():.3f}")
+    
+    # Обучаем на всех данных
+    risk_model.fit(X, y_risk)
+    joblib.dump(risk_model, RISK_MODEL_PATH)
+    print(f"   ✅ Модель риска сохранена в {RISK_MODEL_PATH}")
+    
+    # 2. Обучение модели прогноза просрочки
+    print("\n⏰ 2. Обучение модели прогноза просрочки...")
+    delay_model = build_delay_model()
+    
     X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.25,
-        stratify=y,
-        random_state=42,
+        X, y_delay, test_size=0.2, random_state=42
     )
-
-    model.fit(X_train, y_train)
-
-    probs = model.predict_proba(X_test)[:, 1]
-    preds = (probs >= 0.4).astype(int)  # Изменяем порог для лучшего баланса
-
-    print("Holdout результаты:")
-    print(f"  accuracy: {accuracy_score(y_test, preds):.3f}")
-    print(f"  precision: {precision_score(y_test, preds):.3f}")
-    print(f"  recall: {recall_score(y_test, preds):.3f}")
-    print(f"  f1: {f1_score(y_test, preds):.3f}")
-    print(f"  roc_auc: {roc_auc_score(y_test, probs):.3f}")
-    print(f"  confusion_matrix: {confusion_matrix(y_test, preds).tolist()}")
-
-    # Анализ важности признаков
-    print("\n🔍 Анализ важности признаков...")
-    model.fit(X, y)
+    delay_model.fit(X_train, y_train)
     
-    # Получаем названия признаков
-    numeric_features = ["implementation_days", "planned_duration_days", "start_weekday", 
-                    "planned_end_weekday", "title_len", "description_len", "acceptance_len"]
-    cat_encoder = model.named_steps["preprocess"].named_transformers_["cat"]
-    cat_features = cat_encoder.get_feature_names_out(["assignee", "task_type"])
+    y_pred = delay_model.predict(X_test)
+    mae = mean_absolute_error(y_test, y_pred)
+    print(f"   MAE на тесте: {mae:.2f} дня")
     
-    feature_names = numeric_features + list(cat_features)
-    analyze_feature_importance(model, feature_names)
-
-    # Обучаем на всех данных и сохраняем
-    print(f"\n💾 Обучение на всех данных и сохранение модели в {MODEL_PATH}...")
-    model.fit(X, y)
-    joblib.dump(model, MODEL_PATH)
-
-    print("✅ Модель успешно обучена и сохранена!")
+    joblib.dump(delay_model, DELAY_MODEL_PATH)
+    print(f"   ✅ Модель прогноза просрочки сохранена в {DELAY_MODEL_PATH}")
+    
+    # 3. Построение рекомендательной системы
+    print("\n👥 3. Построение рекомендательной системы замены...")
+    replacement_recommender = build_replacement_recommender(df)
+    joblib.dump(replacement_recommender, REPLACEMENT_MODEL_PATH)
+    
+    # Сохраняем метаданные
+    metadata = {
+        "training_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "samples_count": len(df),
+        "features_count": len(X.columns),
+        "risk_cv_scores": {k: float(scores[f'test_{k}'].mean()) for k in ["accuracy", "roc_auc"]},
+        "delay_mae": float(mae),
+        "top_assignees": replacement_recommender["top_overall"],
+        "risk_levels": {
+            "low": "< 0.35",
+            "medium": "0.35-0.70",
+            "high": ">= 0.70"
+        }
+    }
+    
+    with open(METADATA_PATH, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    
+    print(f"\n✅ Модели успешно обучены и сохранены!")
+    print(f"📋 Метаданные сохранены в {METADATA_PATH}")
+    
+    return risk_model, delay_model, replacement_recommender
 
 
 if __name__ == "__main__":
-    main()
+    train_models()
