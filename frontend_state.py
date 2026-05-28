@@ -163,12 +163,129 @@ def _event_in_period(event, start_date, end_date):
     return True
 
 
+
+def _analytics_risk_level(value):
+    value = str(value or "").lower().strip()
+
+    if value in ("high", "???????", "???????"):
+        return "high"
+
+    if value in ("medium", "???????", "??????", "??????"):
+        return "medium"
+
+    if value in ("low", "??????", "???????", "???????"):
+        return "low"
+
+    return "unknown"
+
+
+def _analytics_project_code(issue_key):
+    issue_key = str(issue_key or "").upper().strip()
+
+    if "-" in issue_key:
+        return issue_key.split("-", 1)[0]
+
+    return issue_key or "UNKNOWN"
+
+
+def _empty_risk_bucket():
+    return {
+        "low": 0,
+        "medium": 0,
+        "high": 0,
+        "unknown": 0,
+    }
+
+
+def _build_history_analytics(date_from=None, date_to=None, project=None, risk=None):
+    start_date = _parse_history_date(date_from)
+    end_date = _parse_history_date(date_to)
+
+    selected_project = str(project or "").upper().strip()
+    if selected_project == "ALL":
+        selected_project = ""
+
+    selected_risk = str(risk or "").lower().strip()
+    if selected_risk == "all":
+        selected_risk = ""
+
+    if selected_risk:
+        selected_risk = _analytics_risk_level(selected_risk)
+
+    risk_distribution = _empty_risk_bucket()
+    risk_by_day = {}
+    risk_by_project = {}
+    all_projects = set()
+    filtered_count = 0
+
+    for event in history:
+        risk_level = _analytics_risk_level(event.get("risk_level"))
+        project_code = _analytics_project_code(event.get("issue"))
+        all_projects.add(project_code)
+
+        event_time = str(event.get("time", ""))
+        event_day = event_time[:10] if len(event_time) >= 10 else "unknown"
+
+        event_date = None
+        if event_day != "unknown":
+            event_date = _parse_history_date(event_day)
+
+        if start_date and event_date and event_date < start_date:
+            continue
+
+        if end_date and event_date and event_date > end_date:
+            continue
+
+        if selected_project and project_code != selected_project:
+            continue
+
+        if selected_risk and risk_level != selected_risk:
+            continue
+
+        filtered_count += 1
+        risk_distribution[risk_level] += 1
+
+        if event_day not in risk_by_day:
+            risk_by_day[event_day] = _empty_risk_bucket()
+
+        risk_by_day[event_day][risk_level] += 1
+
+        if project_code not in risk_by_project:
+            risk_by_project[project_code] = _empty_risk_bucket()
+
+        risk_by_project[project_code][risk_level] += 1
+
+    return {
+        "filters": {
+            "date_from": date_from,
+            "date_to": date_to,
+            "project": selected_project or "ALL",
+            "risk": selected_risk or "all",
+        },
+        "total_events": len(history),
+        "filtered_events": filtered_count,
+        "projects": sorted(all_projects),
+        "risk_distribution": risk_distribution,
+        "risk_by_day": dict(sorted(risk_by_day.items())),
+        "risk_by_project": dict(sorted(risk_by_project.items())),
+    }
+
+
 def register_frontend(app):
     _load_history_from_file()
 
     @app.get("/dashboard")
     def dashboard():
         return send_from_directory("frontend", "index.html")
+
+    @app.get("/api/analytics")
+    def api_analytics():
+        return jsonify(_build_history_analytics(
+            date_from=request.args.get("date_from"),
+            date_to=request.args.get("date_to"),
+            project=request.args.get("project"),
+            risk=request.args.get("risk"),
+        ))
 
     @app.get("/api/history")
     def api_history():

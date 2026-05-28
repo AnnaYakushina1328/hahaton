@@ -436,6 +436,231 @@
       }
     }
 
+  
+    .analytics-panel {
+      margin-top: 22px;
+      margin-bottom: 22px;
+      padding: 18px;
+      background: white;
+      border-radius: 22px;
+      box-shadow: 0 12px 30px rgba(30, 41, 59, 0.08);
+      border: 1px solid #e8eef8;
+    }
+
+    .analytics-panel h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      color: #172033;
+    }
+
+    .analytics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .analytics-card {
+      padding: 14px;
+      border: 1px solid #e8eef8;
+      border-radius: 18px;
+      background: #fbfcff;
+      min-height: 280px;
+    }
+
+    .analytics-card.large {
+      grid-column: 1 / -1;
+    }
+
+    .analytics-card h3 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      color: #172033;
+    }
+
+    .analytics-card canvas {
+      width: 100% !important;
+      max-height: 260px;
+    }
+
+    @media (max-width: 900px) {
+      .analytics-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .analytics-card.large {
+        grid-column: auto;
+      }
+    }
+
+  
+    .analytics-toggle-button {
+      border: 0;
+      background: #7c3aed;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .analytics-panel {
+      display: none;
+      margin-top: 16px;
+      margin-bottom: 18px;
+      padding: 16px;
+      background: white;
+      border-radius: 22px;
+      box-shadow: 0 12px 30px rgba(30, 41, 59, 0.08);
+      border: 1px solid #e8eef8;
+    }
+
+    .analytics-panel.open {
+      display: block;
+    }
+
+    .analytics-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .analytics-header h2 {
+      margin: 0;
+      font-size: 22px;
+      color: #172033;
+    }
+
+    .analytics-summary {
+      color: #64748b;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .analytics-filters {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+      padding: 12px;
+      border-radius: 16px;
+      background: #f8fafc;
+      border: 1px solid #e8eef8;
+    }
+
+    .analytics-filter-field {
+      display: grid;
+      gap: 6px;
+      color: #52617a;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .analytics-filter-field input,
+    .analytics-filter-field select {
+      border: 1px solid #dde3ef;
+      border-radius: 12px;
+      padding: 9px 10px;
+      font-size: 14px;
+      color: #172033;
+      background: white;
+    }
+
+    .analytics-filter-actions {
+      display: flex;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .analytics-filter-actions button {
+      border: 0;
+      color: white;
+      padding: 10px 12px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .analytics-apply-button {
+      background: #2563eb;
+    }
+
+    .analytics-reset-button {
+      background: #6b7280;
+    }
+
+    .analytics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .analytics-card {
+      padding: 14px;
+      border: 1px solid #e8eef8;
+      border-radius: 18px;
+      background: #fbfcff;
+      min-height: 250px;
+      overflow: hidden;
+    }
+
+    .analytics-card.large {
+      grid-column: 1 / -1;
+    }
+
+    .analytics-card h3 {
+      margin: 0 0 10px;
+      font-size: 16px;
+      color: #172033;
+    }
+
+    .analytics-chart-scroll {
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+
+    .analytics-card canvas {
+      width: 100% !important;
+      max-height: 230px;
+    }
+
+    #riskByProjectChart {
+      min-width: 520px;
+    }
+
+    .analytics-note {
+      margin-top: 8px;
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    @media (max-width: 1050px) {
+      .analytics-filters {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .analytics-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .analytics-card.large {
+        grid-column: auto;
+      }
+    }
+
+    @media (max-width: 650px) {
+      .analytics-filters {
+        grid-template-columns: 1fr;
+      }
+
+      .analytics-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+
   </style>
 </head>
 
@@ -1137,6 +1362,404 @@
       window.addEventListener("DOMContentLoaded", setupHistoryClearControls);
     </script>
     <!-- HISTORY_CLEAR_PATCH_END -->
+
+
+    
+
+
+    <!-- RISK_ANALYTICS_PATCH_START -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+      const analyticsCharts = {};
+      let analyticsProjectOptionsLoaded = false;
+
+      function setupRiskAnalyticsPanel() {
+        const panelActions = document.querySelector(".panel-actions");
+        const historyBlock = document.getElementById("history");
+
+        if (!panelActions || !historyBlock) {
+          return;
+        }
+
+        if (!document.getElementById("analyticsToggleButton")) {
+          const toggleButton = document.createElement("button");
+          toggleButton.id = "analyticsToggleButton";
+          toggleButton.type = "button";
+          toggleButton.className = "analytics-toggle-button";
+          toggleButton.innerHTML = "&#1055;&#1086;&#1082;&#1072;&#1079;&#1072;&#1090;&#1100; &#1072;&#1085;&#1072;&#1083;&#1080;&#1090;&#1080;&#1082;&#1091;";
+
+          panelActions.appendChild(toggleButton);
+
+          toggleButton.addEventListener("click", async () => {
+            const panel = document.getElementById("riskAnalyticsPanel");
+
+            if (!panel) {
+              return;
+            }
+
+            panel.classList.toggle("open");
+
+            if (panel.classList.contains("open")) {
+              toggleButton.innerHTML = "&#1057;&#1082;&#1088;&#1099;&#1090;&#1100; &#1072;&#1085;&#1072;&#1083;&#1080;&#1090;&#1080;&#1082;&#1091;";
+              await loadRiskAnalytics();
+            } else {
+              toggleButton.innerHTML = "&#1055;&#1086;&#1082;&#1072;&#1079;&#1072;&#1090;&#1100; &#1072;&#1085;&#1072;&#1083;&#1080;&#1090;&#1080;&#1082;&#1091;";
+            }
+          });
+        }
+
+        if (document.getElementById("riskAnalyticsPanel")) {
+          return;
+        }
+
+        const panel = document.createElement("section");
+        panel.id = "riskAnalyticsPanel";
+        panel.className = "analytics-panel";
+
+        panel.innerHTML = `
+          <div class="analytics-header">
+            <h2>&#1040;&#1085;&#1072;&#1083;&#1080;&#1090;&#1080;&#1082;&#1072; &#1088;&#1080;&#1089;&#1082;&#1086;&#1074;</h2>
+            <div class="analytics-summary" id="analyticsSummary"></div>
+          </div>
+
+          <div class="analytics-filters">
+            <label class="analytics-filter-field">
+              <span>&#1053;&#1072;&#1095;&#1072;&#1083;&#1086;</span>
+              <input id="analyticsDateFrom" type="date" />
+            </label>
+
+            <label class="analytics-filter-field">
+              <span>&#1050;&#1086;&#1085;&#1077;&#1094;</span>
+              <input id="analyticsDateTo" type="date" />
+            </label>
+
+            <label class="analytics-filter-field">
+              <span>&#1054;&#1095;&#1077;&#1088;&#1077;&#1076;&#1100;</span>
+              <select id="analyticsProjectFilter">
+                <option value="all">&#1042;&#1089;&#1077;</option>
+              </select>
+            </label>
+
+            <label class="analytics-filter-field">
+              <span>&#1056;&#1080;&#1089;&#1082;</span>
+              <select id="analyticsRiskFilter">
+                <option value="all">&#1042;&#1089;&#1077;</option>
+                <option value="low">&#1053;&#1080;&#1079;&#1082;&#1080;&#1081;</option>
+                <option value="medium">&#1057;&#1088;&#1077;&#1076;&#1085;&#1080;&#1081;</option>
+                <option value="high">&#1042;&#1099;&#1089;&#1086;&#1082;&#1080;&#1081;</option>
+                <option value="unknown">&#1053;&#1077; &#1088;&#1072;&#1089;&#1089;&#1095;&#1080;&#1090;&#1072;&#1085;</option>
+              </select>
+            </label>
+
+            <div class="analytics-filter-actions">
+              <button type="button" class="analytics-apply-button" id="analyticsApplyFilters">
+                &#1055;&#1088;&#1080;&#1084;&#1077;&#1085;&#1080;&#1090;&#1100;
+              </button>
+
+              <button type="button" class="analytics-reset-button" id="analyticsResetFilters">
+                &#1057;&#1073;&#1088;&#1086;&#1089;
+              </button>
+            </div>
+          </div>
+
+          <div class="analytics-grid">
+            <div class="analytics-card">
+              <h3>&#1056;&#1072;&#1089;&#1087;&#1088;&#1077;&#1076;&#1077;&#1083;&#1077;&#1085;&#1080;&#1077; &#1088;&#1080;&#1089;&#1082;&#1086;&#1074;</h3>
+              <canvas id="riskDistributionChart"></canvas>
+            </div>
+
+            <div class="analytics-card">
+              <h3>&#1056;&#1080;&#1089;&#1082;&#1080; &#1087;&#1086; &#1086;&#1095;&#1077;&#1088;&#1077;&#1076;&#1103;&#1084;</h3>
+              <div class="analytics-chart-scroll">
+                <canvas id="riskByProjectChart"></canvas>
+              </div>
+              <div class="analytics-note" id="riskByProjectNote"></div>
+            </div>
+
+            <div class="analytics-card large">
+              <h3>&#1044;&#1080;&#1085;&#1072;&#1084;&#1080;&#1082;&#1072; &#1088;&#1080;&#1089;&#1082;&#1086;&#1074; &#1087;&#1086; &#1076;&#1085;&#1103;&#1084;</h3>
+              <canvas id="riskByDayChart"></canvas>
+            </div>
+          </div>
+        `;
+
+        historyBlock.parentNode.insertBefore(panel, historyBlock);
+
+        document.getElementById("analyticsApplyFilters").addEventListener("click", loadRiskAnalytics);
+
+        document.getElementById("analyticsResetFilters").addEventListener("click", async () => {
+          document.getElementById("analyticsDateFrom").value = "";
+          document.getElementById("analyticsDateTo").value = "";
+          document.getElementById("analyticsProjectFilter").value = "all";
+          document.getElementById("analyticsRiskFilter").value = "all";
+          await loadRiskAnalytics();
+        });
+      }
+
+      function riskChartLabels() {
+        return {
+          low: "\u041d\u0438\u0437\u043a\u0438\u0439",
+          medium: "\u0421\u0440\u0435\u0434\u043d\u0438\u0439",
+          high: "\u0412\u044b\u0441\u043e\u043a\u0438\u0439",
+          unknown: "\u041d\u0435 \u0440\u0430\u0441\u0441\u0447\u0438\u0442\u0430\u043d"
+        };
+      }
+
+      function destroyChart(name) {
+        if (analyticsCharts[name]) {
+          analyticsCharts[name].destroy();
+          delete analyticsCharts[name];
+        }
+      }
+
+      function getAnalyticsFilters() {
+        const params = new URLSearchParams();
+
+        const dateFrom = document.getElementById("analyticsDateFrom")?.value || "";
+        const dateTo = document.getElementById("analyticsDateTo")?.value || "";
+        const project = document.getElementById("analyticsProjectFilter")?.value || "all";
+        const risk = document.getElementById("analyticsRiskFilter")?.value || "all";
+
+        if (dateFrom) params.set("date_from", dateFrom);
+        if (dateTo) params.set("date_to", dateTo);
+        if (project !== "all") params.set("project", project);
+        if (risk !== "all") params.set("risk", risk);
+
+        return params;
+      }
+
+      function updateProjectOptions(projects) {
+        const select = document.getElementById("analyticsProjectFilter");
+
+        if (!select || analyticsProjectOptionsLoaded) {
+          return;
+        }
+
+        const currentValue = select.value || "all";
+
+        projects.forEach(project => {
+          const option = document.createElement("option");
+          option.value = project;
+          option.textContent = project;
+          select.appendChild(option);
+        });
+
+        select.value = currentValue;
+        analyticsProjectOptionsLoaded = true;
+      }
+
+      function updateAnalyticsSummary(data) {
+        const summary = document.getElementById("analyticsSummary");
+
+        if (!summary) {
+          return;
+        }
+
+        summary.textContent = "\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e \u0441\u043e\u0431\u044b\u0442\u0438\u0439: " + 
+          (data.filtered_events || 0) + " / " + (data.total_events || 0);
+      }
+
+      function renderRiskDistributionChart(data) {
+        const canvas = document.getElementById("riskDistributionChart");
+
+        if (!canvas || !window.Chart) {
+          return;
+        }
+
+        destroyChart("distribution");
+
+        const labels = riskChartLabels();
+        const distribution = data.risk_distribution || {};
+
+        analyticsCharts.distribution = new Chart(canvas, {
+          type: "doughnut",
+          data: {
+            labels: [labels.low, labels.medium, labels.high, labels.unknown],
+            datasets: [{
+              data: [
+                distribution.low || 0,
+                distribution.medium || 0,
+                distribution.high || 0,
+                distribution.unknown || 0
+              ]
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: "bottom"
+              }
+            }
+          }
+        });
+      }
+
+      function renderRiskByDayChart(data) {
+        const canvas = document.getElementById("riskByDayChart");
+
+        if (!canvas || !window.Chart) {
+          return;
+        }
+
+        destroyChart("byDay");
+
+        const labels = riskChartLabels();
+        const riskByDay = data.risk_by_day || {};
+        const days = Object.keys(riskByDay);
+
+        analyticsCharts.byDay = new Chart(canvas, {
+          type: "bar",
+          data: {
+            labels: days,
+            datasets: [
+              {
+                label: labels.low,
+                data: days.map(day => riskByDay[day].low || 0),
+                stack: "risk"
+              },
+              {
+                label: labels.medium,
+                data: days.map(day => riskByDay[day].medium || 0),
+                stack: "risk"
+              },
+              {
+                label: labels.high,
+                data: days.map(day => riskByDay[day].high || 0),
+                stack: "risk"
+              },
+              {
+                label: labels.unknown,
+                data: days.map(day => riskByDay[day].unknown || 0),
+                stack: "risk"
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: {
+                stacked: true
+              },
+              y: {
+                stacked: true,
+                beginAtZero: true,
+                ticks: {
+                  precision: 0
+                }
+              }
+            },
+            plugins: {
+              legend: {
+                position: "bottom"
+              }
+            }
+          }
+        });
+      }
+
+      function renderRiskByProjectChart(data) {
+        const canvas = document.getElementById("riskByProjectChart");
+        const note = document.getElementById("riskByProjectNote");
+
+        if (!canvas || !window.Chart) {
+          return;
+        }
+
+        destroyChart("byProject");
+
+        const riskByProject = data.risk_by_project || {};
+        const projects = Object.keys(riskByProject)
+          .sort((a, b) => {
+            const left = riskByProject[a] || {};
+            const right = riskByProject[b] || {};
+            const leftTotal = (left.high || 0) + (left.medium || 0) + (left.low || 0) + (left.unknown || 0);
+            const rightTotal = (right.high || 0) + (right.medium || 0) + (right.low || 0) + (right.unknown || 0);
+            return rightTotal - leftTotal;
+          });
+
+        const visibleProjects = projects.slice(0, 8);
+
+        if (note) {
+          if (projects.length > 8) {
+            note.textContent = "\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u0442\u043e\u043f-8 \u043e\u0447\u0435\u0440\u0435\u0434\u0435\u0439. \u041e\u0441\u0442\u0430\u043b\u044c\u043d\u044b\u0435 \u043c\u043e\u0436\u043d\u043e \u043f\u043e\u0441\u043c\u043e\u0442\u0440\u0435\u0442\u044c \u0447\u0435\u0440\u0435\u0437 \u0444\u0438\u043b\u044c\u0442\u0440.";
+          } else {
+            note.textContent = "";
+          }
+        }
+
+        canvas.style.minWidth = Math.max(520, visibleProjects.length * 120) + "px";
+
+        analyticsCharts.byProject = new Chart(canvas, {
+          type: "bar",
+          data: {
+            labels: visibleProjects,
+            datasets: [{
+              label: "\u0412\u044b\u0441\u043e\u043a\u0438\u0439 + \u0441\u0440\u0435\u0434\u043d\u0438\u0439 \u0440\u0438\u0441\u043a",
+              data: visibleProjects.map(project => {
+                const item = riskByProject[project] || {};
+                return (item.high || 0) + (item.medium || 0);
+              })
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  precision: 0
+                }
+              }
+            },
+            plugins: {
+              legend: {
+                display: false
+              }
+            }
+          }
+        });
+      }
+
+      async function loadRiskAnalytics() {
+        try {
+          setupRiskAnalyticsPanel();
+
+          const params = getAnalyticsFilters();
+          const query = params.toString();
+          const url = query ? "/api/analytics?" + query : "/api/analytics";
+
+          const response = await fetch(url);
+          const data = await response.json();
+
+          updateProjectOptions(data.projects || []);
+          updateAnalyticsSummary(data);
+
+          renderRiskDistributionChart(data);
+          renderRiskByDayChart(data);
+          renderRiskByProjectChart(data);
+        } catch (error) {
+          console.error("Risk analytics loading failed:", error);
+        }
+      }
+
+      window.addEventListener("DOMContentLoaded", () => {
+        setupRiskAnalyticsPanel();
+
+        setInterval(() => {
+          const panel = document.getElementById("riskAnalyticsPanel");
+
+          if (panel && panel.classList.contains("open")) {
+            loadRiskAnalytics();
+          }
+        }, 30000);
+      });
+    </script>
+    <!-- RISK_ANALYTICS_PATCH_END -->
 
 </body>
 </html>
