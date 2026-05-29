@@ -1506,6 +1506,15 @@
         };
       }
 
+      function riskChartColors() {
+        return {
+          low: "#8FD3A9",
+          medium: "#F6C27A",
+          high: "#E89A9A",
+          unknown: "#B7C3D0"
+        };
+      }
+
       function destroyChart(name) {
         if (analyticsCharts[name]) {
           analyticsCharts[name].destroy();
@@ -1561,41 +1570,124 @@
       }
 
       function renderRiskDistributionChart(data) {
-        const canvas = document.getElementById("riskDistributionChart");
+  const canvas = document.getElementById("riskDistributionChart");
 
-        if (!canvas || !window.Chart) {
+  if (!canvas || !window.Chart) {
+    return;
+  }
+
+  destroyChart("distribution");
+
+  const labels = riskChartLabels();
+  const colors = riskChartColors();
+  const distribution = data.risk_distribution || {};
+
+  const chartLabels = [
+    labels.low,
+    labels.medium,
+    labels.high,
+    labels.unknown
+  ];
+
+  const chartValues = [
+    distribution.low || 0,
+    distribution.medium || 0,
+    distribution.high || 0,
+    distribution.unknown || 0
+  ];
+
+  const outsideLabelsPlugin = {
+    id: "outsideDoughnutLabels",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      const dataset = chart.data.datasets[0];
+
+      ctx.save();
+      ctx.font = "700 14px Arial";
+      ctx.fillStyle = "#172033";
+      ctx.strokeStyle = "#94a3b8";
+      ctx.lineWidth = 1.5;
+
+      meta.data.forEach((arc, index) => {
+        const value = dataset.data[index];
+
+        if (!value) {
           return;
         }
 
-        destroyChart("distribution");
+        const label = chart.data.labels[index];
+        const text = `${label}: ${value}`;
 
-        const labels = riskChartLabels();
-        const distribution = data.risk_distribution || {};
+        const angle = (arc.startAngle + arc.endAngle) / 2;
+        const centerX = arc.x;
+        const centerY = arc.y;
 
-        analyticsCharts.distribution = new Chart(canvas, {
-          type: "doughnut",
-          data: {
-            labels: [labels.low, labels.medium, labels.high, labels.unknown],
-            datasets: [{
-              data: [
-                distribution.low || 0,
-                distribution.medium || 0,
-                distribution.high || 0,
-                distribution.unknown || 0
-              ]
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: {
-                position: "bottom"
-              }
-            }
-          }
-        });
+        const lineStartX = centerX + Math.cos(angle) * arc.outerRadius;
+        const lineStartY = centerY + Math.sin(angle) * arc.outerRadius;
+
+        const lineMiddleX = centerX + Math.cos(angle) * (arc.outerRadius + 18);
+        const lineMiddleY = centerY + Math.sin(angle) * (arc.outerRadius + 18);
+
+        const isRightSide = Math.cos(angle) >= 0;
+        const lineEndX = lineMiddleX + (isRightSide ? 28 : -28);
+        const lineEndY = lineMiddleY;
+
+        ctx.beginPath();
+        ctx.moveTo(lineStartX, lineStartY);
+        ctx.lineTo(lineMiddleX, lineMiddleY);
+        ctx.lineTo(lineEndX, lineEndY);
+        ctx.stroke();
+
+        ctx.textAlign = isRightSide ? "left" : "right";
+        ctx.textBaseline = "middle";
+        ctx.fillText(text, lineEndX + (isRightSide ? 6 : -6), lineEndY);
+      });
+
+      ctx.restore();
+    }
+  };
+
+  analyticsCharts.distribution = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      labels: chartLabels,
+      datasets: [{
+        data: chartValues,
+        backgroundColor: [
+          colors.low,
+          colors.medium,
+          colors.high,
+          colors.unknown
+        ],
+        borderColor: "#ffffff",
+        borderWidth: 2
+      }]
+    },
+    plugins: [outsideLabelsPlugin],
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: {
+        padding: {
+          left: 105,
+          right: 125,
+          top: 25,
+          bottom: 25
+        }
+      },
+      cutout: "48%",
+      plugins: {
+        tooltip: {
+          enabled: false
+        },
+        legend: {
+          display: false
+        }
       }
+    }
+  });
+}
 
       function renderRiskByDayChart(data) {
         const canvas = document.getElementById("riskByDayChart");
@@ -1607,6 +1699,7 @@
         destroyChart("byDay");
 
         const labels = riskChartLabels();
+        const colors = riskChartColors();
         const riskByDay = data.risk_by_day || {};
         const days = Object.keys(riskByDay);
 
@@ -1618,22 +1711,30 @@
               {
                 label: labels.low,
                 data: days.map(day => riskByDay[day].low || 0),
-                stack: "risk"
+                stack: "risk",
+                backgroundColor: colors.low,
+                borderColor: colors.low
               },
               {
                 label: labels.medium,
                 data: days.map(day => riskByDay[day].medium || 0),
-                stack: "risk"
+                stack: "risk",
+                backgroundColor: colors.medium,
+                borderColor: colors.medium
               },
               {
                 label: labels.high,
                 data: days.map(day => riskByDay[day].high || 0),
-                stack: "risk"
+                stack: "risk",
+                backgroundColor: colors.high,
+                borderColor: colors.high
               },
               {
                 label: labels.unknown,
                 data: days.map(day => riskByDay[day].unknown || 0),
-                stack: "risk"
+                stack: "risk",
+                backgroundColor: colors.unknown,
+                borderColor: colors.unknown
               }
             ]
           },
@@ -1671,6 +1772,8 @@
 
         destroyChart("byProject");
 
+        const labels = riskChartLabels();
+        const colors = riskChartColors();
         const riskByProject = data.risk_by_project || {};
         const projects = Object.keys(riskByProject)
           .sort((a, b) => {
@@ -1697,19 +1800,58 @@
           type: "bar",
           data: {
             labels: visibleProjects,
-            datasets: [{
-              label: "\u0412\u044b\u0441\u043e\u043a\u0438\u0439 + \u0441\u0440\u0435\u0434\u043d\u0438\u0439 \u0440\u0438\u0441\u043a",
-              data: visibleProjects.map(project => {
-                const item = riskByProject[project] || {};
-                return (item.high || 0) + (item.medium || 0);
-              })
-            }]
+            datasets: [
+              {
+                label: labels.low,
+                data: visibleProjects.map(project => {
+                  const item = riskByProject[project] || {};
+                  return item.low || 0;
+                }),
+                backgroundColor: colors.low,
+                borderColor: colors.low,
+                stack: "risk"
+              },
+              {
+                label: labels.medium,
+                data: visibleProjects.map(project => {
+                  const item = riskByProject[project] || {};
+                  return item.medium || 0;
+                }),
+                backgroundColor: colors.medium,
+                borderColor: colors.medium,
+                stack: "risk"
+              },
+              {
+                label: labels.high,
+                data: visibleProjects.map(project => {
+                  const item = riskByProject[project] || {};
+                  return item.high || 0;
+                }),
+                backgroundColor: colors.high,
+                borderColor: colors.high,
+                stack: "risk"
+              },
+              {
+                label: labels.unknown,
+                data: visibleProjects.map(project => {
+                  const item = riskByProject[project] || {};
+                  return item.unknown || 0;
+                }),
+                backgroundColor: colors.unknown,
+                borderColor: colors.unknown,
+                stack: "risk"
+              }
+            ]
           },
           options: {
             responsive: true,
             maintainAspectRatio: false,
             scales: {
+              x: {
+                stacked: true
+              },
               y: {
+                stacked: true,
                 beginAtZero: true,
                 ticks: {
                   precision: 0
@@ -1718,7 +1860,7 @@
             },
             plugins: {
               legend: {
-                display: false
+                position: "bottom"
               }
             }
           }
